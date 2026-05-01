@@ -7,6 +7,14 @@ from setuptools import setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
 
+if os.name == "nt":
+    cxx_flags = ["/O2", "/Zc:preprocessor"]
+    nvcc_flags = ["-O3", "--use_fast_math", "-Xcompiler", "/Zc:preprocessor"]
+else:
+    cxx_flags = ["-O2"]
+    nvcc_flags = ["-O3", "--use_fast_math"]
+
+
 setup(
     name="silexcode",
     version="0.1.0",
@@ -19,8 +27,8 @@ setup(
                 "silexcode/cuda/tlinear_kernels.cu",
             ],
             extra_compile_args={
-                "cxx": ["/O2", "/Zc:preprocessor"] if os.name == "nt" else ["-O2"],
-                "nvcc": ["-O3", "--use_fast_math", "-Xcompiler", "/Zc:preprocessor"],
+                "cxx": cxx_flags,
+                "nvcc": nvcc_flags,
             },
         )
     ],

@@ -44,7 +44,11 @@ def _load_extension():
                 str(root / "cuda" / "tlinear_kernels.cu"),
             ],
             extra_cflags=["/O2", "/Zc:preprocessor"] if os.name == "nt" else ["-O2"],
-            extra_cuda_cflags=["-O3", "--use_fast_math", "-Xcompiler", "/Zc:preprocessor"],
+            extra_cuda_cflags=(
+                ["-O3", "--use_fast_math", "-Xcompiler", "/Zc:preprocessor"]
+                if os.name == "nt"
+                else ["-O3", "--use_fast_math"]
+            ),
             with_cuda=True,
             verbose=False,
         )
