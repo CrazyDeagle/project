@@ -53,6 +53,7 @@ def build_packed_sequence_and_mask(
     stage: int,
     *,
     seq_len: int = SEQ_LEN,
+    include_padding_loss: bool = False,
 ) -> PackedChunk:
     if seq_len != SEQ_LEN:
         raise ValueError("accelerated native training requires SEQ_LEN=512")
@@ -64,17 +65,21 @@ def build_packed_sequence_and_mask(
     used_indices: list[int] = []
     target_tokens = 0
 
-    for record in records:
+    prepared: list[tuple[int, dict, list[int], int, int]] = []
+    for order, record in enumerate(records):
         prefix, target = _prefix_and_target(record, stage)
         segment = encode_ascii_record(prefix + target)
         if len(segment) > seq_len:
             continue
+        prefix_ids = encode_ascii_record_without_eos(prefix)
+        prepared.append((len(segment), record, segment, len(prefix_ids), order))
+
+    for _segment_len, record, segment, prefix_len, _order in sorted(prepared, key=lambda x: (x[0], x[4])):
         if len(ids) + len(segment) > seq_len:
-            break
+            continue
 
         base = len(ids)
-        prefix_ids = encode_ascii_record_without_eos(prefix)
-        target_start = base + len(prefix_ids) - 1
+        target_start = base + prefix_len - 1
         target_end_exclusive = base + len(segment) - 1
 
         ids.extend(segment)
@@ -87,7 +92,7 @@ def build_packed_sequence_and_mask(
         raise ValueError("NO_RECORD_FITS_PACKED_CHUNK")
 
     real_len = len(ids)
-    if real_len < seq_len:
+    if include_padding_loss and real_len < seq_len:
         for pos in range(max(0, real_len - 1), seq_len - 1):
             loss_mask[pos] = 1
             target_tokens += 1
@@ -101,9 +106,21 @@ def build_packed_sequence_and_mask(
     )
 
 
-def generate_packed_chunk(stage: int, start_index: int, *, max_records: int = 8) -> PackedChunk:
-    records = [generate_record(stage, start_index + i) for i in range(max_records)]
-    return build_packed_sequence_and_mask(records, stage)
+def generate_packed_chunk(
+    stage: int,
+    start_index: int,
+    *,
+    max_records: int = 8,
+    candidate_multiplier: int = 4,
+    include_padding_loss: bool = False,
+) -> PackedChunk:
+    candidate_count = max_records * max(1, candidate_multiplier)
+    records = [generate_record(stage, start_index + i) for i in range(candidate_count)]
+    return build_packed_sequence_and_mask(
+        records,
+        stage,
+        include_padding_loss=include_padding_loss,
+    )
 
 
 def _save_jsonl(output_dir: str, row: dict) -> None:
@@ -121,6 +138,8 @@ def train_accelerated_curriculum(
     eval_every_updates_override: int | None = None,
     val_size_override: int | None = None,
     max_records_per_chunk: int = 8,
+    candidate_multiplier: int = 4,
+    include_padding_loss: bool = False,
     require_thresholds: bool = True,
     generate_eval_outputs: bool | None = None,
     enable_ssd: bool | None = None,
@@ -177,10 +196,20 @@ def train_accelerated_curriculum(
             if use_ssd:
                 base = global_update % len(ssd_pool)
                 records = [ssd_pool[(base + i) % len(ssd_pool)] for i in range(min(max_records_per_chunk, len(ssd_pool)))]
-                chunk = build_packed_sequence_and_mask(records, stage)
+                chunk = build_packed_sequence_and_mask(
+                    records,
+                    stage,
+                    include_padding_loss=include_padding_loss,
+                )
             else:
-                chunk = generate_packed_chunk(stage, record_cursor, max_records=max_records_per_chunk)
-                record_cursor += max(1, len(chunk.record_indices))
+                chunk = generate_packed_chunk(
+                    stage,
+                    record_cursor,
+                    max_records=max_records_per_chunk,
+                    candidate_multiplier=candidate_multiplier,
+                    include_padding_loss=include_padding_loss,
+                )
+                record_cursor += max(1, max_records_per_chunk * max(1, candidate_multiplier))
 
             token_ids_t = torch.tensor(chunk.token_ids, device="cuda", dtype=torch.long)
             labels_t = torch.tensor(chunk.labels, device="cuda", dtype=torch.long)

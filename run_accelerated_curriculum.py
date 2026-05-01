@@ -21,6 +21,8 @@ def main() -> None:
     parser.add_argument("--eval-every", type=int, default=100)
     parser.add_argument("--val-size", type=int, default=16)
     parser.add_argument("--max-records-per-chunk", type=int, default=8)
+    parser.add_argument("--candidate-multiplier", type=int, default=4)
+    parser.add_argument("--include-padding-loss", action="store_true")
     parser.add_argument("--require-thresholds", action="store_true")
     parser.add_argument("--generate-eval-outputs", action="store_true")
     parser.add_argument("--enable-ssd", action="store_true")
@@ -60,6 +62,8 @@ def main() -> None:
         eval_every_updates_override=eval_every,
         val_size_override=val_size,
         max_records_per_chunk=args.max_records_per_chunk,
+        candidate_multiplier=args.candidate_multiplier,
+        include_padding_loss=args.include_padding_loss,
         require_thresholds=require_thresholds,
         generate_eval_outputs=args.generate_eval_outputs,
         enable_ssd=args.enable_ssd,
