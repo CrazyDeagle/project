@@ -71,6 +71,28 @@ python -u run_curriculum.py --dry-run --output-dir runs\final_dry_run
 python -u run_curriculum.py --output-dir runs\silex_curriculum_001
 ```
 
+## Accelerated Curriculum Run
+
+The accelerated runner keeps the strict model math and native CUDA/K-FAC update path, but packs multiple independent synthetic records into each 512-token chunk. Loss masks are active only on formal target bytes and EOS padding, so each CUDA step carries more supervised signal than the one-record runner.
+
+Dry-run:
+
+```powershell
+python -u run_accelerated_curriculum.py --output-dir runs\accelerated_dry_run --dry-run
+```
+
+Probe run without threshold failure:
+
+```powershell
+python -u run_accelerated_curriculum.py --output-dir runs\accelerated_probe --max-updates 1000 --eval-every 100 --val-size 16
+```
+
+Strict run, requiring the TDD thresholds:
+
+```powershell
+python -u run_accelerated_curriculum.py --output-dir runs\accelerated_strict --require-thresholds --generate-eval-outputs --enable-ssd
+```
+
 ## Checkpoint Runtime Modes
 
 - `deterministic_backbone=True`: native runtime uses the FWHT fast path that exactly matches the deterministic TDD initialization.
