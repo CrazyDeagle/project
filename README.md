@@ -75,6 +75,24 @@ python -u run_curriculum.py --output-dir runs\silex_curriculum_001
 
 The accelerated runner keeps the strict model math and native CUDA/K-FAC update path, but packs multiple independent synthetic records into each 512-token chunk. Loss masks are active only on formal target bytes and EOS padding, so each CUDA step carries more supervised signal than the one-record runner.
 
+## Bootstrap Warm Start
+
+Bootstrap is an opt-in pre-curriculum that teaches short Python code structure before Stage 1. It only updates plastic adapters and writes a lightweight plastic checkpoint.
+
+```powershell
+python -u run_bootstrap.py --output-dir runs\bootstrap_b0_b4 --updates-per-level 1000 --eval-every 100
+python analyze_bootstrap_metrics.py runs\bootstrap_b0_b4\bootstrap_metrics.jsonl
+python -u run_accelerated_curriculum.py --resume runs\bootstrap_b0_b4\bootstrap_latest.plastic.silex --output-dir runs\stage1_after_bootstrap --stages 1 --max-updates 1000 --eval-every 100 --val-size 16 --kfac-warmup-updates 100 --eta-scale 0.1 --damping-scale 10 --trust-scale 0.03
+```
+
+Vast:
+
+```bash
+bash scripts/vast_setup.sh
+UPDATES_PER_LEVEL=1000 bash scripts/vast_bootstrap.sh bootstrap_b0_b4
+bash scripts/vast_status.sh bootstrap_b0_b4
+```
+
 Dry-run:
 
 ```powershell

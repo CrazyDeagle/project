@@ -186,6 +186,8 @@ No aumenta VRAM por encima del limite.
 
 ## 5. Mejora D: Warm-Start Supervisado de Adaptadores
 
+Estado: implementado como bootstrap opt-in.
+
 Problema:
 
 El backbone determinista no es un modelo preentrenado semanticamente. Los adaptadores empiezan desde casi cero y solo pueden modificar localmente la red.
@@ -254,6 +256,22 @@ Criterio de aceptacion:
 Tras warm-start, Stage 1 validation NLL_4 inicial baja bastante frente a baseline.
 Meta minima: pasar de ~12 a <8.
 Meta fuerte: <5.
+```
+
+Comandos:
+
+```powershell
+python -u run_bootstrap.py --output-dir runs\bootstrap_b0_b4 --updates-per-level 1000 --eval-every 100
+python analyze_bootstrap_metrics.py runs\bootstrap_b0_b4\bootstrap_metrics.jsonl
+python -u run_accelerated_curriculum.py --resume runs\bootstrap_b0_b4\bootstrap_latest.plastic.silex --output-dir runs\stage1_after_bootstrap --stages 1 --max-updates 1000 --eval-every 100
+```
+
+En Vast:
+
+```bash
+bash scripts/vast_setup.sh
+UPDATES_PER_LEVEL=1000 bash scripts/vast_bootstrap.sh bootstrap_b0_b4
+bash scripts/vast_status.sh bootstrap_b0_b4
 ```
 
 ## 6. Mejora E: Evaluacion de Generacion Mas Barata
