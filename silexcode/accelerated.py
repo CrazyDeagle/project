@@ -124,6 +124,7 @@ def train_accelerated_curriculum(
     require_thresholds: bool = True,
     generate_eval_outputs: bool | None = None,
     enable_ssd: bool | None = None,
+    stages: tuple[int, ...] = (1, 2, 3),
 ):
     if not hasattr(model, "train_chunk_cuda"):
         raise ValueError("accelerated curriculum requires native train_chunk_cuda")
@@ -151,7 +152,7 @@ def train_accelerated_curriculum(
     teacher_cache = None
     ssd_pool: list[dict] = []
 
-    for stage in (1, 2, 3):
+    for stage in stages:
         cfg = STAGE_CONFIG[stage]
         if hasattr(kfac_optimizer, "reset_curvature"):
             kfac_optimizer.reset_curvature(active_layers=cfg["active_layers"], damping=cfg["damping"])

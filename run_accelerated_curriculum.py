@@ -25,6 +25,7 @@ def main() -> None:
     parser.add_argument("--generate-eval-outputs", action="store_true")
     parser.add_argument("--enable-ssd", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--stages", default="1,2,3")
     args = parser.parse_args()
 
     if "CUDA_HOME" not in os.environ and "CUDA_PATH" in os.environ:
@@ -49,10 +50,12 @@ def main() -> None:
         val_size = args.val_size
         require_thresholds = args.require_thresholds
 
+    stages = tuple(int(x) for x in args.stages.split(",") if x.strip())
     train_accelerated_curriculum(
         model,
         optimizer,
         args.output_dir,
+        stages=stages,
         max_updates_override=max_updates,
         eval_every_updates_override=eval_every,
         val_size_override=val_size,
