@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 
 from silexcode.accelerated import train_accelerated_curriculum
-from silexcode.checkpoint import import_silex_checkpoint
+from silexcode.checkpoint import import_plastic_checkpoint, import_silex_checkpoint
 from silexcode.kfac import BlockKFACOptimizer
 from silexcode.model import SilexCodeT18_6B_R64
 from silexcode.training import plastic_named_parameters
@@ -23,6 +23,13 @@ def main() -> None:
     parser.add_argument("--max-records-per-chunk", type=int, default=8)
     parser.add_argument("--candidate-multiplier", type=int, default=4)
     parser.add_argument("--include-padding-loss", action="store_true")
+    parser.add_argument("--packing", choices=["shortest", "balanced", "random-fit"], default="shortest")
+    parser.add_argument("--kfac-warmup-updates", type=int, default=0)
+    parser.add_argument("--eta-scale", type=float, default=1.0)
+    parser.add_argument("--damping-scale", type=float, default=1.0)
+    parser.add_argument("--trust-scale", type=float, default=1.0)
+    parser.add_argument("--checkpoint-every-evals", type=int, default=0)
+    parser.add_argument("--include-kfac", action="store_true")
     parser.add_argument("--require-thresholds", action="store_true")
     parser.add_argument("--generate-eval-outputs", action="store_true")
     parser.add_argument("--enable-ssd", action="store_true")
@@ -39,7 +46,10 @@ def main() -> None:
     model = SilexCodeT18_6B_R64(device="cuda")
     optimizer = BlockKFACOptimizer(plastic_named_parameters(model), lr=0.04, damping=3e-4, trust_region=5e-4)
     if args.resume:
-        import_silex_checkpoint(model, args.resume, kfac_optimizer=optimizer)
+        try:
+            import_plastic_checkpoint(model, args.resume, kfac_optimizer=optimizer)
+        except ValueError:
+            import_silex_checkpoint(model, args.resume, kfac_optimizer=optimizer)
 
     if args.dry_run:
         max_updates = {1: 1, 2: 1, 3: 1}
@@ -64,6 +74,13 @@ def main() -> None:
         max_records_per_chunk=args.max_records_per_chunk,
         candidate_multiplier=args.candidate_multiplier,
         include_padding_loss=args.include_padding_loss,
+        packing=args.packing,
+        kfac_warmup_updates=args.kfac_warmup_updates,
+        eta_scale=args.eta_scale,
+        damping_scale=args.damping_scale,
+        trust_scale=args.trust_scale,
+        checkpoint_every_evals=args.checkpoint_every_evals,
+        include_kfac_in_checkpoints=args.include_kfac,
         require_thresholds=require_thresholds,
         generate_eval_outputs=args.generate_eval_outputs,
         enable_ssd=args.enable_ssd,

@@ -135,6 +135,35 @@ def compute_kd_loss(logits_by_k, teacher_logits_final, loss_mask):
     return kd / (5.0 * denom)
 
 
+def compute_token_diagnostics(logits_by_k, labels, loss_mask) -> dict[str, float]:
+    if isinstance(logits_by_k, list):
+        logits_by_k = torch.stack([x[:-1] if x.shape[0] == SEQ_LEN else x for x in logits_by_k], dim=0)
+    final_logits = logits_by_k[4].float()
+    mask = loss_mask.float()
+    denom = torch.clamp(mask.sum(), min=1.0)
+    ce = F.cross_entropy(final_logits, labels, reduction="none")
+    pred = torch.argmax(final_logits, dim=-1)
+    out = {
+        "token_acc4": float(((pred == labels).float() * mask).sum().detach().cpu() / denom.detach().cpu()),
+        "target_tokens": float(mask.sum().detach().cpu()),
+    }
+
+    def masked_mean(name: str, class_mask: torch.Tensor) -> None:
+        effective = mask * class_mask.float()
+        count = effective.sum()
+        if float(count.detach().cpu()) > 0.0:
+            out[name] = float((ce * effective).sum().detach().cpu() / count.detach().cpu())
+
+    masked_mean("nll4_eos", labels == 257)
+    masked_mean("nll4_non_eos", labels != 257)
+    masked_mean("nll4_newline", labels == 10)
+    masked_mean("nll4_space", labels == 32)
+    masked_mean("nll4_digit", (labels >= 48) & (labels <= 57))
+    masked_mean("nll4_alpha", ((labels >= 65) & (labels <= 90)) | ((labels >= 97) & (labels <= 122)))
+    masked_mean("nll4_tag_chars", (labels == ord("<")) | (labels == ord(">")) | (labels == ord("/")))
+    return out
+
+
 def compute_stage_loss(stage: int, logits_by_k, labels, loss_mask, mdl_loss, teacher_logits_final=None):
     depth = compute_depth_losses(logits_by_k, labels, loss_mask)
     if stage in (1, 2):
@@ -229,13 +258,20 @@ def evaluate_stage(model, stage: int, validation_indices: list[int], teacher_cac
     nll4_sum = mono_sum = gain_sum = 0.0
     compile_pass = unit_pass = count = 0
     var_exact_num = var_exact_den = line_exact_num = line_exact_den = 0
+    diag_sums: dict[str, float] = {}
+    diag_counts: dict[str, int] = {}
     for idx in validation_indices:
         record = generate_record(stage, idx)
         input_ids, labels, loss_mask = build_sequence_and_mask(record, stage)
         input_ids_t = torch.tensor(input_ids, device="cuda", dtype=torch.long)
         labels_t = torch.tensor(labels, device="cuda", dtype=torch.long)
         mask_t = torch.tensor(loss_mask, device="cuda", dtype=torch.float32)
-        depth = compute_depth_losses(model_forward_train(model, input_ids_t), labels_t, mask_t)
+        logits_by_k = model_forward_train(model, input_ids_t)
+        depth = compute_depth_losses(logits_by_k, labels_t, mask_t)
+        token_diag = compute_token_diagnostics(logits_by_k, labels_t, mask_t)
+        for key, value in token_diag.items():
+            diag_sums[key] = diag_sums.get(key, 0.0) + float(value)
+            diag_counts[key] = diag_counts.get(key, 0) + 1
         nll4_sum += float(depth["nll_by_k"][4].detach().cpu())
         mono_sum += float(depth["mono"].detach().cpu())
         gain_sum += float(depth["latent_gain"].detach().cpu())
@@ -256,6 +292,8 @@ def evaluate_stage(model, stage: int, validation_indices: list[int], teacher_cac
             line_exact_num += le_num
             line_exact_den += le_den
     metrics = {"nll4": nll4_sum / count, "mono": mono_sum / count, "latent_gain": gain_sum / count}
+    for key, total in diag_sums.items():
+        metrics[key] = total / max(1, diag_counts[key])
     if stage in (1, 3):
         metrics["compile_pass"] = compile_pass / count
         metrics["unit_pass"] = unit_pass / count

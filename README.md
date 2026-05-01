@@ -84,13 +84,23 @@ python -u run_accelerated_curriculum.py --output-dir runs\accelerated_dry_run --
 Probe run without threshold failure:
 
 ```powershell
-python -u run_accelerated_curriculum.py --output-dir runs\accelerated_probe --max-updates 1000 --eval-every 100 --val-size 16
+python -u run_accelerated_curriculum.py --output-dir runs\accelerated_probe --stages 1 --max-updates 1000 --eval-every 100 --val-size 16 --packing shortest --kfac-warmup-updates 25 --eta-scale 0.5 --damping-scale 3.0 --trust-scale 0.3
+python analyze_curriculum_metrics.py runs\accelerated_probe\accelerated_metrics.jsonl
 ```
 
 Strict run, requiring the TDD thresholds:
 
 ```powershell
 python -u run_accelerated_curriculum.py --output-dir runs\accelerated_strict --require-thresholds --generate-eval-outputs --enable-ssd
+```
+
+Vast helper scripts:
+
+```bash
+bash scripts/vast_setup.sh
+MAX_UPDATES=1000 bash scripts/vast_probe_stage1.sh stage1_probe_next
+bash scripts/vast_status.sh stage1_probe_next
+bash scripts/vast_stop_training.sh
 ```
 
 ## Checkpoint Runtime Modes

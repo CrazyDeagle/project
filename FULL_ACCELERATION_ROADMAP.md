@@ -57,6 +57,8 @@ No lanzar `--require-thresholds` hasta cumplir lo anterior.
 
 ## 2. Mejora A: Diagnostico de Entrenamiento Mucho Mas Claro
 
+Estado: implementado.
+
 Problema:
 
 Ahora vemos `nll4`, `mono`, `latent_gain`, `natural_norm`, pero no sabemos si el modelo:
@@ -100,6 +102,8 @@ frecuencia, saturacion, padding, K-FAC o generacion.
 
 ## 3. Mejora B: Packing Acelerado Sin Padding Waste
 
+Estado: implementado.
+
 Estado:
 
 Ya aplicado parcialmente:
@@ -120,10 +124,12 @@ Completar:
    - En Stage 1, asegurar mezcla F0-F4.
    - En Stage 3, asegurar aparicion de F7/F8 aunque sean menos frecuentes.
 
-3. Opciones CLI:
+3. Opciones CLI implementadas:
    - `--packing shortest`
    - `--packing balanced`
    - `--packing random-fit`
+   - `--candidate-multiplier`
+   - `--include-padding-loss`
 
 Criterio de aceptacion:
 
@@ -134,6 +140,8 @@ target_tokens/chunk aumenta sin meter padding artificial.
 ```
 
 ## 4. Mejora C: Estabilidad K-FAC y Trust Region
+
+Estado: implementado como controles experimentales verificables.
 
 Problema medido:
 
@@ -150,17 +158,19 @@ Esto sugiere updates demasiado agresivos o curvatura mal condicionada al inicio.
 
 Implementar:
 
-1. Exponer `chi` desde `block_kfac_step_param` y `silex_train_chunk_cuda`.
+1. Exponer `chi` desde `silex_train_chunk_cuda`.
 2. Loggear:
    - `natural_norm`.
    - `chi`.
    - numero de matrices actualizadas.
-3. Warmup de K-FAC:
+3. Warmup de K-FAC implementado:
    - Durante N pasos, actualizar curvatura pero no parametros.
    - O usar LR reducido para las primeras N updates.
-4. Clip adicional del update natural:
-   - Mantener matematicamente separado como modo experimental.
-   - CLI: `--kfac-warmup-updates`.
+4. Escalas experimentales implementadas:
+   - `--kfac-warmup-updates`
+   - `--eta-scale`
+   - `--damping-scale`
+   - `--trust-scale`
 5. Grid corto de hiperparametros:
    - eta stage 1: `0.080`, `0.040`, `0.020`, `0.010`.
    - damping: `1e-3`, `3e-3`, `1e-2`.
@@ -280,6 +290,8 @@ Generacion solo cuando el modelo tenga posibilidad real de compilar.
 
 ## 7. Mejora F: Checkpointing de Probes
 
+Estado: implementado como checkpoint ligero de adaptadores.
+
 Problema:
 
 Si una prueba de 5000 updates mejora, hay que poder continuar sin perder credito.
@@ -287,7 +299,6 @@ Si una prueba de 5000 updates mejora, hay que poder continuar sin perder credito
 Implementar:
 
 1. Guardar checkpoint cada N evals:
-   - modelo.
    - plastic adapters.
    - K-FAC opcional.
    - config del run.
@@ -305,6 +316,8 @@ Se puede parar Vast, reactivar y continuar desde el ultimo checkpoint.
 ```
 
 ## 8. Mejora G: Scripts Vast Reproducibles
+
+Estado: implementado.
 
 Problema:
 
@@ -337,6 +350,8 @@ Con 3 comandos se instala, lanza y monitorea.
 ```
 
 ## 9. Mejora H: Comparador de Experimentos
+
+Estado: implementado.
 
 Crear:
 

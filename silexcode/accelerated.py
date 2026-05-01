@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import torch
 
+from .checkpoint import export_plastic_checkpoint
 from .dataset import GLOBAL_SEED, RNG, encode_ascii_record, encode_ascii_record_without_eos, generate_record
 from .train import (
     ADVANCE_CONSECUTIVE_EVALS,
@@ -32,6 +34,7 @@ class PackedChunk:
     labels: list[int]
     loss_mask: list[int]
     record_indices: list[int]
+    family_ids: list[int]
     target_tokens: int
 
 
@@ -54,6 +57,7 @@ def build_packed_sequence_and_mask(
     *,
     seq_len: int = SEQ_LEN,
     include_padding_loss: bool = False,
+    packing: str = "shortest",
 ) -> PackedChunk:
     if seq_len != SEQ_LEN:
         raise ValueError("accelerated native training requires SEQ_LEN=512")
@@ -63,6 +67,7 @@ def build_packed_sequence_and_mask(
     ids: list[int] = []
     loss_mask = [0] * (seq_len - 1)
     used_indices: list[int] = []
+    family_ids: list[int] = []
     target_tokens = 0
 
     prepared: list[tuple[int, dict, list[int], int, int]] = []
@@ -74,7 +79,28 @@ def build_packed_sequence_and_mask(
         prefix_ids = encode_ascii_record_without_eos(prefix)
         prepared.append((len(segment), record, segment, len(prefix_ids), order))
 
-    for _segment_len, record, segment, prefix_len, _order in sorted(prepared, key=lambda x: (x[0], x[4])):
+    if packing == "shortest":
+        ordered = sorted(prepared, key=lambda x: (x[0], x[4]))
+    elif packing == "balanced":
+        groups: dict[int, list[tuple[int, dict, list[int], int, int]]] = {}
+        for item in prepared:
+            groups.setdefault(int(item[1]["family_id"]), []).append(item)
+        for family in groups:
+            groups[family].sort(key=lambda x: (x[0], x[4]))
+        ordered = []
+        while any(groups.values()):
+            for family in sorted(groups):
+                if groups[family]:
+                    ordered.append(groups[family].pop(0))
+    elif packing == "random-fit":
+        ordered = sorted(
+            prepared,
+            key=lambda x: ((GLOBAL_SEED ^ (int(x[1]["index"]) * 0x9E3779B97F4A7C15)) & ((1 << 64) - 1), x[4]),
+        )
+    else:
+        raise ValueError("packing must be one of: shortest, balanced, random-fit")
+
+    for _segment_len, record, segment, prefix_len, _order in ordered:
         if len(ids) + len(segment) > seq_len:
             continue
 
@@ -84,6 +110,7 @@ def build_packed_sequence_and_mask(
 
         ids.extend(segment)
         used_indices.append(int(record["index"]))
+        family_ids.append(int(record["family_id"]))
         for pos in range(target_start, min(target_end_exclusive, seq_len - 1)):
             loss_mask[pos] = 1
             target_tokens += 1
@@ -102,6 +129,7 @@ def build_packed_sequence_and_mask(
         labels=ids[1:],
         loss_mask=loss_mask,
         record_indices=used_indices,
+        family_ids=family_ids,
         target_tokens=target_tokens,
     )
 
@@ -113,6 +141,7 @@ def generate_packed_chunk(
     max_records: int = 8,
     candidate_multiplier: int = 4,
     include_padding_loss: bool = False,
+    packing: str = "shortest",
 ) -> PackedChunk:
     candidate_count = max_records * max(1, candidate_multiplier)
     records = [generate_record(stage, start_index + i) for i in range(candidate_count)]
@@ -120,6 +149,7 @@ def generate_packed_chunk(
         records,
         stage,
         include_padding_loss=include_padding_loss,
+        packing=packing,
     )
 
 
@@ -140,6 +170,13 @@ def train_accelerated_curriculum(
     max_records_per_chunk: int = 8,
     candidate_multiplier: int = 4,
     include_padding_loss: bool = False,
+    packing: str = "shortest",
+    kfac_warmup_updates: int = 0,
+    eta_scale: float = 1.0,
+    damping_scale: float = 1.0,
+    trust_scale: float = 1.0,
+    checkpoint_every_evals: int = 0,
+    include_kfac_in_checkpoints: bool = False,
     require_thresholds: bool = True,
     generate_eval_outputs: bool | None = None,
     enable_ssd: bool | None = None,
@@ -173,13 +210,17 @@ def train_accelerated_curriculum(
 
     for stage in stages:
         cfg = STAGE_CONFIG[stage]
+        stage_eta = float(cfg["eta"]) * float(eta_scale)
+        stage_damping = float(cfg["damping"]) * float(damping_scale)
+        stage_delta = float(cfg["delta"]) * float(trust_scale)
         if hasattr(kfac_optimizer, "reset_curvature"):
-            kfac_optimizer.reset_curvature(active_layers=cfg["active_layers"], damping=cfg["damping"])
+            kfac_optimizer.reset_curvature(active_layers=cfg["active_layers"], damping=stage_damping)
         if hasattr(kfac_optimizer, "set_hyperparams"):
-            kfac_optimizer.set_hyperparams(eta=cfg["eta"], damping=cfg["damping"], trust_region_delta=cfg["delta"])
+            kfac_optimizer.set_hyperparams(eta=stage_eta, damping=stage_damping, trust_region_delta=stage_delta)
 
         consecutive_ready = 0
         record_cursor = stage * 1_000_000_000
+        eval_count = 0
 
         if stage == 3:
             teacher_cache_path = str(Path(output_dir) / "teacher_stage3_logits")
@@ -200,6 +241,7 @@ def train_accelerated_curriculum(
                     records,
                     stage,
                     include_padding_loss=include_padding_loss,
+                    packing=packing,
                 )
             else:
                 chunk = generate_packed_chunk(
@@ -208,6 +250,7 @@ def train_accelerated_curriculum(
                     max_records=max_records_per_chunk,
                     candidate_multiplier=candidate_multiplier,
                     include_padding_loss=include_padding_loss,
+                    packing=packing,
                 )
                 record_cursor += max(1, max_records_per_chunk * max(1, candidate_multiplier))
 
@@ -221,6 +264,8 @@ def train_accelerated_curriculum(
                 if cached is not None:
                     teacher_logits = cached.to("cuda", dtype=torch.float32)
 
+            step_start = time.perf_counter()
+            effective_eta = 0.0 if local_update < int(kfac_warmup_updates) else stage_eta
             metrics, _state = model.train_chunk_cuda(
                 token_ids_t,
                 workspace=workspace,
@@ -229,11 +274,12 @@ def train_accelerated_curriculum(
                 stage=stage,
                 kfac_optimizer=kfac_optimizer,
                 active_layers=cfg["active_layers"],
-                eta=cfg["eta"],
-                damping=cfg["damping"],
-                trust_region_delta=cfg["delta"],
+                eta=effective_eta,
+                damping=stage_damping,
+                trust_region_delta=stage_delta,
                 teacher_logits_final=teacher_logits,
             )
+            step_seconds = time.perf_counter() - step_start
 
             global_update += 1
             if local_update % eval_every == 0:
@@ -252,13 +298,39 @@ def train_accelerated_curriculum(
                         "stage": stage,
                         "global_update": global_update,
                         "local_update": local_update,
-                        "train": {k: float(v) for k, v in metrics.items() if k != "new_state"},
+                        "train": {
+                            **{k: float(v) for k, v in metrics.items() if k != "new_state"},
+                            "step_seconds": float(step_seconds),
+                            "updates_per_minute": float(60.0 / max(step_seconds, 1.0e-9)),
+                            "eta": float(effective_eta),
+                            "damping": float(stage_damping),
+                            "trust_region_delta": float(stage_delta),
+                            "kfac_warmup_active": float(local_update < int(kfac_warmup_updates)),
+                            "max_memory_allocated_mb": float(torch.cuda.max_memory_allocated() / (1024**2)),
+                        },
                         "validation": val_metrics,
                         "packed_records": len(chunk.record_indices),
+                        "family_ids": chunk.family_ids,
                         "target_tokens": chunk.target_tokens,
+                        "target_fraction": chunk.target_tokens / float(SEQ_LEN - 1),
                         "consecutive_ready": consecutive_ready,
                     },
                 )
+                eval_count += 1
+                if checkpoint_every_evals > 0 and eval_count % checkpoint_every_evals == 0:
+                    ckpt = Path(output_dir) / f"stage_{stage}_update_{global_update}.plastic.silex"
+                    export_plastic_checkpoint(
+                        model,
+                        ckpt,
+                        kfac_optimizer=kfac_optimizer,
+                        include_kfac=include_kfac_in_checkpoints,
+                        metadata={
+                            "stage": stage,
+                            "global_update": global_update,
+                            "local_update": local_update,
+                            "include_kfac": include_kfac_in_checkpoints,
+                        },
+                    )
                 if require_thresholds and consecutive_ready >= ADVANCE_CONSECUTIVE_EVALS:
                     break
 

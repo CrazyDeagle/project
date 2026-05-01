@@ -10,6 +10,7 @@ from .model import SilexCodeT18_6B_R64, TLinear, TernaryEmbedding
 
 
 SILEX_MAGIC = "SILEXCODE_T18_6B_R64"
+SILEX_PLASTIC_MAGIC = "SILEXCODE_T18_6B_R64_PLASTIC"
 SILEX_VERSION = 1
 
 
@@ -95,6 +96,14 @@ def _collect_kfac_state(kfac_optimizer) -> dict[str, dict[str, torch.Tensor]] | 
     return out
 
 
+def _plastic_state_dict(model: SilexCodeT18_6B_R64) -> dict[str, torch.Tensor]:
+    return {
+        name: param.detach().cpu()
+        for name, param in model.named_parameters()
+        if param.requires_grad
+    }
+
+
 def export_silex_checkpoint(
     model: SilexCodeT18_6B_R64,
     path: str | Path,
@@ -158,3 +167,69 @@ def import_silex_checkpoint(
             dst.a_inv.copy_(src["a_inv"].to(device=dst.a_inv.device))
             dst.g_inv.copy_(src["g_inv"].to(device=dst.g_inv.device))
     return {"version": payload["version"], "has_kfac": kfac_state is not None}
+
+
+def export_plastic_checkpoint(
+    model: SilexCodeT18_6B_R64,
+    path: str | Path,
+    *,
+    kfac_optimizer=None,
+    include_kfac: bool = False,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    plastic = _plastic_state_dict(model)
+    payload = {
+        "magic": SILEX_PLASTIC_MAGIC,
+        "version": SILEX_VERSION,
+        "model_name": model.name,
+        "metadata": metadata or {},
+        "manifest": _tensor_manifest(plastic),
+        "plastic_state": plastic,
+        "kfac_state": _collect_kfac_state(kfac_optimizer) if include_kfac else None,
+    }
+    torch.save(payload, path)
+
+
+def import_plastic_checkpoint(
+    model: SilexCodeT18_6B_R64,
+    path: str | Path,
+    *,
+    kfac_optimizer=None,
+    map_location: str | torch.device = "cpu",
+) -> dict[str, Any]:
+    payload = torch.load(Path(path), map_location=map_location)
+    if not isinstance(payload, dict) or payload.get("magic") != SILEX_PLASTIC_MAGIC:
+        raise ValueError("SILEX_PLASTIC_CHECKPOINT_BAD_MAGIC")
+    if payload.get("version") != SILEX_VERSION:
+        raise ValueError("SILEX_PLASTIC_CHECKPOINT_UNSUPPORTED_VERSION")
+    plastic = payload.get("plastic_state")
+    if not isinstance(plastic, dict):
+        raise ValueError("SILEX_PLASTIC_CHECKPOINT_MISSING_STATE")
+    params = dict(model.named_parameters())
+    for name, tensor in plastic.items():
+        if name not in params:
+            raise ValueError(f"SILEX_PLASTIC_CHECKPOINT_UNKNOWN_PARAM:{name}")
+        param = params[name]
+        if not param.requires_grad:
+            raise ValueError(f"SILEX_PLASTIC_CHECKPOINT_NON_PLASTIC_PARAM:{name}")
+        if tensor.dtype != param.dtype or tuple(tensor.shape) != tuple(param.shape):
+            raise ValueError(f"SILEX_PLASTIC_CHECKPOINT_PARAM_MISMATCH:{name}")
+        param.data.copy_(tensor.to(device=param.device, dtype=param.dtype, non_blocking=True))
+
+    kfac_state = payload.get("kfac_state")
+    if kfac_optimizer is not None and kfac_state is not None:
+        for name, src in kfac_state.items():
+            if name not in kfac_optimizer.state:
+                raise ValueError(f"SILEX_PLASTIC_CHECKPOINT_UNKNOWN_KFAC_PARAM:{name}")
+            dst = kfac_optimizer.state[name]
+            dst.a_cov.copy_(src["a_cov"].to(device=dst.a_cov.device))
+            dst.g_cov.copy_(src["g_cov"].to(device=dst.g_cov.device))
+            dst.a_inv.copy_(src["a_inv"].to(device=dst.a_inv.device))
+            dst.g_inv.copy_(src["g_inv"].to(device=dst.g_inv.device))
+    return {
+        "version": payload["version"],
+        "has_kfac": kfac_state is not None,
+        "metadata": payload.get("metadata", {}),
+    }

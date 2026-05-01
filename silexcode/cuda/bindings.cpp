@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <tuple>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include <cuda_runtime.h>
@@ -1253,7 +1254,7 @@ void update_curvature_and_collect(
     step_g_invs.push_back(g_invs[static_cast<size_t>(kfac_index)]);
 }
 
-double apply_global_kfac_step(
+std::pair<double, double> apply_global_kfac_step(
     const std::vector<torch::Tensor>& params,
     const std::vector<torch::Tensor>& grads,
     const std::vector<torch::Tensor>& a_invs,
@@ -1265,7 +1266,7 @@ double apply_global_kfac_step(
 ) {
     TORCH_CHECK(params.size() == grads.size() && params.size() == a_invs.size() && params.size() == g_invs.size(), "K-FAC step vector size mismatch");
     if (params.empty()) {
-        return 0.0;
+        return {0.0, 1.0};
     }
     torch::NoGradGuard no_grad;
     const c10::cuda::CUDAGuard device_guard(params[0].device());
@@ -1308,7 +1309,7 @@ double apply_global_kfac_step(
         auto nat = d_blocks.permute({0, 2, 1, 3}).contiguous().reshape_as(param);
         param.add_(nat, -eta * chi);
     }
-    return nu;
+    return {nu, chi};
 }
 
 std::tuple<torch::Tensor, torch::Tensor, std::vector<torch::Tensor>> silex_forward_cuda(
@@ -1934,7 +1935,7 @@ pybind11::dict silex_train_chunk_cuda_update(
     }
     profiler.mark("backward_layers_done");
 
-    double nu = apply_global_kfac_step(
+    auto kfac_step = apply_global_kfac_step(
         step_params,
         step_grads,
         step_a_invs,
@@ -1944,6 +1945,8 @@ pybind11::dict silex_train_chunk_cuda_update(
         trust_region_delta,
         eps_opt
     );
+    double nu = kfac_step.first;
+    double chi = kfac_step.second;
     profiler.mark("kfac_step_done");
 
     constexpr double omega[5] = {2.0 / 30.0, 4.0 / 30.0, 6.0 / 30.0, 8.0 / 30.0, 10.0 / 30.0};
@@ -1963,6 +1966,7 @@ pybind11::dict silex_train_chunk_cuda_update(
     out["mono"] = grad_result.mono;
     out["latent_gain"] = grad_result.latent_gain;
     out["natural_norm"] = nu;
+    out["trust_chi"] = chi;
     out["updated_matrices"] = static_cast<int64_t>(step_params.size());
     return out;
 }
