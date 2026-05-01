@@ -12,7 +12,7 @@ echo "--- gpu ---"
 nvidia-smi --query-gpu=name,utilization.gpu,memory.used,power.draw --format=csv,noheader
 
 echo "--- process ---"
-ps -ef | grep run_accelerated_curriculum.py | grep -v grep || true
+ps -ef | grep -E 'run_accelerated_curriculum.py|run_bootstrap.py' | grep -v grep || true
 
 echo "--- metrics tail ---"
 if [ -f "${METRICS}" ]; then
