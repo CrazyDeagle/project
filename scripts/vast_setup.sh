@@ -2,6 +2,7 @@
 set -euo pipefail
 
 cd "${SILEX_DIR:-/workspace/silexcode}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 git pull
 /venv/main/bin/python -m pip install -e . --no-build-isolation
 /venv/main/bin/python -m pytest tests/test_accelerated_curriculum.py -q

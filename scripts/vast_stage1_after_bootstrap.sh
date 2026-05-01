@@ -2,6 +2,7 @@
 set -euo pipefail
 
 cd "${SILEX_DIR:-/workspace/silexcode}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 
 BOOTSTRAP_RUN="${1:-bootstrap_b0_b4}"
 RUN_NAME="${2:-stage1_after_bootstrap}"
