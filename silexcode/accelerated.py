@@ -214,7 +214,7 @@ def train_accelerated_curriculum(
                     teacher_cache,
                     generate_outputs=do_generate_eval,
                 )
-                ready = (not require_thresholds) or stage_ready(stage, val_metrics)
+                ready = stage_ready(stage, val_metrics) if require_thresholds else False
                 consecutive_ready = consecutive_ready + 1 if ready else 0
                 _save_jsonl(
                     output_dir,
@@ -229,7 +229,7 @@ def train_accelerated_curriculum(
                         "consecutive_ready": consecutive_ready,
                     },
                 )
-                if consecutive_ready >= ADVANCE_CONSECUTIVE_EVALS:
+                if require_thresholds and consecutive_ready >= ADVANCE_CONSECUTIVE_EVALS:
                     break
 
         if consecutive_ready < ADVANCE_CONSECUTIVE_EVALS:
