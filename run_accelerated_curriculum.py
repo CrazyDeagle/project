@@ -59,18 +59,18 @@ def main() -> None:
         if not name.startswith("output_adapter_")
     )
     optimizer = None
-    if args.output_adapter_only:
-        if not args.enable_output_adapter:
-            raise ValueError("--output-adapter-only requires --enable-output-adapter")
-        model.freeze_internal_plastic_adapters()
-        optimizer = torch.optim.AdamW(model.output_adapter_parameters(), lr=args.output_adapter_lr, betas=(0.9, 0.95), weight_decay=0.0)
-    else:
+    if args.output_adapter_only and not args.enable_output_adapter:
+        raise ValueError("--output-adapter-only requires --enable-output-adapter")
+    if not args.output_adapter_only:
         optimizer = BlockKFACOptimizer(kfac_params, lr=0.04, damping=3e-4, trust_region=5e-4)
     if args.resume:
         try:
             import_plastic_checkpoint(model, args.resume, kfac_optimizer=optimizer)
         except ValueError:
             import_silex_checkpoint(model, args.resume, kfac_optimizer=optimizer)
+    if args.output_adapter_only:
+        model.freeze_internal_plastic_adapters()
+        optimizer = torch.optim.AdamW(model.output_adapter_parameters(), lr=args.output_adapter_lr, betas=(0.9, 0.95), weight_decay=0.0)
 
     if args.dry_run:
         max_updates = {1: 1, 2: 1, 3: 1}
