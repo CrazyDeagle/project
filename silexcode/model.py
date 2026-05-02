@@ -710,7 +710,7 @@ class SilexCodeT18_6B_R64(nn.Module):
                 kfac_a_invs,
                 kfac_g_invs,
                 active,
-                1 if native_optimizer == "sgd" else 0,
+                {"kfac": 0, "sgd": 1, "output-sgd": 2}.get(native_optimizer, 0),
                 int(stage),
                 float(kfac_optimizer.lr if eta is None else eta),
                 float(kfac_optimizer.damping if damping is None else damping),

@@ -1853,6 +1853,46 @@ pybind11::dict silex_train_chunk_cuda_update(
     logits_by_depth.clear();
     profiler.mark("loss_grad_done");
 
+    if (native_optimizer == 2) {
+        TORCH_CHECK(use_output_adapter, "native output adapter optimizer requires output adapter enabled");
+        auto grad_down = torch::zeros_like(output_adapter_down);
+        auto grad_up = torch::zeros_like(output_adapter_up);
+        for (int k = 0; k < 5; ++k) {
+            auto zk = z_trace.select(0, k).narrow(0, 0, T);
+            auto out = rms_norm_native(zk.contiguous(), gamma_out.contiguous(), EPS_NORM).to(torch::kFloat32).contiguous();
+            auto d_logits = grad_result.dlogits[static_cast<size_t>(k)].contiguous().to(torch::kFloat32);
+            auto hidden = torch::matmul(out, output_adapter_down.contiguous().transpose(0, 1));
+            grad_up.add_(torch::matmul(d_logits.transpose(0, 1), hidden));
+            auto d_hidden = torch::matmul(d_logits, output_adapter_up.contiguous());
+            grad_down.add_(torch::matmul(d_hidden.transpose(0, 1), out));
+        }
+        double grad_norm = (grad_down.square().sum() + grad_up.square().sum()).item<double>();
+        output_adapter_down.add_(grad_down, -eta);
+        output_adapter_up.add_(grad_up, -eta);
+
+        constexpr double omega[5] = {2.0 / 30.0, 4.0 / 30.0, 6.0 / 30.0, 8.0 / 30.0, 10.0 / 30.0};
+        double weighted_nll = 0.0;
+        for (int k = 0; k < 5; ++k) {
+            weighted_nll += omega[k] * grad_result.nll_by_k[static_cast<size_t>(k)];
+        }
+        pybind11::dict out_dict;
+        out_dict["new_state"] = new_state;
+        out_dict["nll"] = weighted_nll;
+        out_dict["nll0"] = grad_result.nll_by_k[0];
+        out_dict["nll1"] = grad_result.nll_by_k[1];
+        out_dict["nll2"] = grad_result.nll_by_k[2];
+        out_dict["nll3"] = grad_result.nll_by_k[3];
+        out_dict["nll4"] = grad_result.nll_by_k[4];
+        out_dict["mono"] = grad_result.mono;
+        out_dict["latent_gain"] = grad_result.latent_gain;
+        out_dict["natural_norm"] = grad_norm;
+        out_dict["trust_chi"] = 1.0;
+        out_dict["update_norm"] = grad_norm * eta * eta;
+        out_dict["native_optimizer"] = native_optimizer;
+        out_dict["updated_matrices"] = static_cast<int64_t>(2);
+        return out_dict;
+    }
+
     std::vector<torch::Tensor> dz;
     dz.reserve(5);
     for (int k = 0; k < 5; ++k) {
