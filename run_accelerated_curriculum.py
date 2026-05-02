@@ -6,7 +6,7 @@ from pathlib import Path
 
 import torch
 
-from silexcode.accelerated import train_accelerated_curriculum
+from silexcode.accelerated import train_accelerated_curriculum, train_output_adapter_curriculum
 from silexcode.checkpoint import import_plastic_checkpoint, import_silex_checkpoint
 from silexcode.kfac import BlockKFACOptimizer
 from silexcode.model import SilexCodeT18_6B_R64
@@ -35,6 +35,8 @@ def main() -> None:
     parser.add_argument("--enable-ssd", action="store_true")
     parser.add_argument("--enable-output-adapter", action="store_true")
     parser.add_argument("--output-adapter-rank", type=int, default=64)
+    parser.add_argument("--output-adapter-only", action="store_true")
+    parser.add_argument("--output-adapter-lr", type=float, default=1.0e-3)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--stages", default="1,2,3")
     args = parser.parse_args()
@@ -55,7 +57,14 @@ def main() -> None:
         for name, param in plastic_named_parameters(model)
         if not name.startswith("output_adapter_")
     )
-    optimizer = BlockKFACOptimizer(kfac_params, lr=0.04, damping=3e-4, trust_region=5e-4)
+    optimizer = None
+    if args.output_adapter_only:
+        if not args.enable_output_adapter:
+            raise ValueError("--output-adapter-only requires --enable-output-adapter")
+        model.freeze_internal_plastic_adapters()
+        optimizer = torch.optim.AdamW(model.output_adapter_parameters(), lr=args.output_adapter_lr, betas=(0.9, 0.95), weight_decay=0.0)
+    else:
+        optimizer = BlockKFACOptimizer(kfac_params, lr=0.04, damping=3e-4, trust_region=5e-4)
     if args.resume:
         try:
             import_plastic_checkpoint(model, args.resume, kfac_optimizer=optimizer)
@@ -74,28 +83,46 @@ def main() -> None:
         require_thresholds = args.require_thresholds
 
     stages = tuple(int(x) for x in args.stages.split(",") if x.strip())
-    train_accelerated_curriculum(
-        model,
-        optimizer,
-        args.output_dir,
-        stages=stages,
-        max_updates_override=max_updates,
-        eval_every_updates_override=eval_every,
-        val_size_override=val_size,
-        max_records_per_chunk=args.max_records_per_chunk,
-        candidate_multiplier=args.candidate_multiplier,
-        include_padding_loss=args.include_padding_loss,
-        packing=args.packing,
-        kfac_warmup_updates=args.kfac_warmup_updates,
-        eta_scale=args.eta_scale,
-        damping_scale=args.damping_scale,
-        trust_scale=args.trust_scale,
-        checkpoint_every_evals=args.checkpoint_every_evals,
-        include_kfac_in_checkpoints=args.include_kfac,
-        require_thresholds=require_thresholds,
-        generate_eval_outputs=args.generate_eval_outputs,
-        enable_ssd=args.enable_ssd,
-    )
+    if args.output_adapter_only:
+        train_output_adapter_curriculum(
+            model,
+            optimizer,
+            args.output_dir,
+            stages=stages,
+            max_updates_override=max_updates,
+            eval_every_updates_override=eval_every,
+            val_size_override=val_size,
+            max_records_per_chunk=args.max_records_per_chunk,
+            candidate_multiplier=args.candidate_multiplier,
+            include_padding_loss=args.include_padding_loss,
+            packing=args.packing,
+            checkpoint_every_evals=args.checkpoint_every_evals,
+            require_thresholds=require_thresholds,
+            generate_eval_outputs=args.generate_eval_outputs,
+        )
+    else:
+        train_accelerated_curriculum(
+            model,
+            optimizer,
+            args.output_dir,
+            stages=stages,
+            max_updates_override=max_updates,
+            eval_every_updates_override=eval_every,
+            val_size_override=val_size,
+            max_records_per_chunk=args.max_records_per_chunk,
+            candidate_multiplier=args.candidate_multiplier,
+            include_padding_loss=args.include_padding_loss,
+            packing=args.packing,
+            kfac_warmup_updates=args.kfac_warmup_updates,
+            eta_scale=args.eta_scale,
+            damping_scale=args.damping_scale,
+            trust_scale=args.trust_scale,
+            checkpoint_every_evals=args.checkpoint_every_evals,
+            include_kfac_in_checkpoints=args.include_kfac,
+            require_thresholds=require_thresholds,
+            generate_eval_outputs=args.generate_eval_outputs,
+            enable_ssd=args.enable_ssd,
+        )
     print("run_accelerated_curriculum=PASS", flush=True)
 
 

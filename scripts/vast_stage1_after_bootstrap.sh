@@ -23,6 +23,8 @@ nohup setsid /venv/main/bin/python -u run_accelerated_curriculum.py \
   --output-dir "${OUT_DIR}" \
   ${ENABLE_OUTPUT_ADAPTER:+--enable-output-adapter} \
   --output-adapter-rank "${OUTPUT_ADAPTER_RANK:-64}" \
+  ${OUTPUT_ADAPTER_ONLY:+--output-adapter-only} \
+  --output-adapter-lr "${OUTPUT_ADAPTER_LR:-0.001}" \
   --stages 1 \
   --max-updates "${MAX_UPDATES:-1000}" \
   --eval-every "${EVAL_EVERY:-100}" \

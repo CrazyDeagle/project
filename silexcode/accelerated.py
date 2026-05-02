@@ -17,6 +17,7 @@ from .train import (
     SEQ_LEN,
     STAGE_CONFIG,
     VAL_SIZE_PER_STAGE,
+    compute_depth_losses,
     build_ssd_pool,
     evaluate_stage,
     extract_code_body_with_closing_C,
@@ -348,4 +349,131 @@ def train_accelerated_curriculum(
                 },
             )
 
+    return model
+
+
+def train_output_adapter_curriculum(
+    model,
+    optimizer: torch.optim.Optimizer,
+    output_dir: str,
+    *,
+    stages: tuple[int, ...] = (1,),
+    max_updates_override: dict[int, int] | None = None,
+    eval_every_updates_override: int | None = None,
+    val_size_override: int | None = None,
+    max_records_per_chunk: int = 8,
+    candidate_multiplier: int = 4,
+    include_padding_loss: bool = False,
+    packing: str = "shortest",
+    checkpoint_every_evals: int = 0,
+    require_thresholds: bool = False,
+    generate_eval_outputs: bool = False,
+):
+    if not bool(getattr(model, "output_adapter_enabled", False)):
+        raise ValueError("output adapter curriculum requires enable_output_adapter=True")
+
+    torch.manual_seed(123456789)
+    torch.cuda.manual_seed_all(123456789)
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+
+    val_size = VAL_SIZE_PER_STAGE if val_size_override is None else int(val_size_override)
+    eval_every = EVAL_EVERY_UPDATES if eval_every_updates_override is None else int(eval_every_updates_override)
+    max_updates = MAX_UPDATES if max_updates_override is None else {
+        stage: int(max_updates_override.get(stage, MAX_UPDATES[stage])) for stage in (1, 2, 3)
+    }
+    validation_indices = {
+        1: [10_000_000 + i for i in range(val_size)],
+        2: [20_000_000 + i for i in range(val_size)],
+        3: [30_000_000 + i for i in range(val_size)],
+    }
+
+    global_update = 0
+    for stage in stages:
+        record_cursor = stage * 1_000_000_000
+        eval_count = 0
+        consecutive_ready = 0
+        for local_update in range(max_updates[stage]):
+            chunk = generate_packed_chunk(
+                stage,
+                record_cursor,
+                max_records=max_records_per_chunk,
+                candidate_multiplier=candidate_multiplier,
+                include_padding_loss=include_padding_loss,
+                packing=packing,
+            )
+            record_cursor += max(1, max_records_per_chunk * max(1, candidate_multiplier))
+            input_ids_t = torch.tensor(chunk.token_ids[:-1], device="cuda", dtype=torch.long)
+            labels_t = torch.tensor(chunk.labels, device="cuda", dtype=torch.long)
+            mask_t = torch.tensor(chunk.loss_mask, device="cuda", dtype=torch.float32)
+
+            step_start = time.perf_counter()
+            optimizer.zero_grad(set_to_none=True)
+            logits_by_k = model.forward_train(input_ids=input_ids_t, k_train=K_TRAIN, return_logits_by_depth=True)
+            depth = compute_depth_losses(logits_by_k, labels_t, mask_t)
+            loss = depth["nll"] + 0.10 * depth["mono"]
+            loss.backward()
+            optimizer.step()
+            step_seconds = time.perf_counter() - step_start
+            global_update += 1
+
+            if local_update % eval_every == 0:
+                val_metrics = evaluate_stage(
+                    model,
+                    stage,
+                    validation_indices[stage],
+                    teacher_cache=None,
+                    generate_outputs=generate_eval_outputs,
+                )
+                ready = stage_ready(stage, val_metrics) if require_thresholds else False
+                consecutive_ready = consecutive_ready + 1 if ready else 0
+                _save_jsonl(
+                    output_dir,
+                    {
+                        "stage": stage,
+                        "global_update": global_update,
+                        "local_update": local_update,
+                        "train": {
+                            "loss": float(loss.detach().cpu()),
+                            "nll": float(depth["nll"].detach().cpu()),
+                            "mono": float(depth["mono"].detach().cpu()),
+                            "nll4": float(depth["nll_by_k"][4].detach().cpu()),
+                            "latent_gain": float(depth["latent_gain"].detach().cpu()),
+                            "step_seconds": float(step_seconds),
+                            "updates_per_minute": float(60.0 / max(step_seconds, 1.0e-9)),
+                            "max_memory_allocated_mb": float(torch.cuda.max_memory_allocated() / (1024**2)),
+                        },
+                        "validation": val_metrics,
+                        "packed_records": len(chunk.record_indices),
+                        "family_ids": chunk.family_ids,
+                        "target_tokens": chunk.target_tokens,
+                        "target_fraction": chunk.target_tokens / float(SEQ_LEN - 1),
+                        "consecutive_ready": consecutive_ready,
+                    },
+                )
+                eval_count += 1
+                if checkpoint_every_evals > 0 and eval_count % checkpoint_every_evals == 0:
+                    export_plastic_checkpoint(
+                        model,
+                        Path(output_dir) / f"stage_{stage}_update_{global_update}.plastic.silex",
+                        kfac_optimizer=None,
+                        include_kfac=False,
+                        metadata={
+                            "stage": stage,
+                            "global_update": global_update,
+                            "local_update": local_update,
+                            "optimizer": "output_adapter_adamw",
+                        },
+                    )
+                if require_thresholds and consecutive_ready >= ADVANCE_CONSECUTIVE_EVALS:
+                    break
+
+        if require_thresholds and consecutive_ready < ADVANCE_CONSECUTIVE_EVALS:
+            raise RuntimeError(f"OUTPUT_ADAPTER_CURRICULUM_STAGE_{stage}_FAILED_THRESHOLDS")
+
+    export_plastic_checkpoint(
+        model,
+        Path(output_dir) / "output_adapter_latest.plastic.silex",
+        metadata={"global_update": global_update, "stages": list(stages), "optimizer": "output_adapter_adamw"},
+    )
     return model
