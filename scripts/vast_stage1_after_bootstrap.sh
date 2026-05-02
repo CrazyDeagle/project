@@ -21,6 +21,8 @@ rm -rf "${OUT_DIR}"
 nohup setsid /venv/main/bin/python -u run_accelerated_curriculum.py \
   --resume "${BOOTSTRAP_CKPT}" \
   --output-dir "${OUT_DIR}" \
+  ${ENABLE_OUTPUT_ADAPTER:+--enable-output-adapter} \
+  --output-adapter-rank "${OUTPUT_ADAPTER_RANK:-64}" \
   --stages 1 \
   --max-updates "${MAX_UPDATES:-1000}" \
   --eval-every "${EVAL_EVERY:-100}" \

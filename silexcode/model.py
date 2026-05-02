@@ -686,6 +686,12 @@ class SilexCodeT18_6B_R64(nn.Module):
 
             kfac_a_covs, kfac_g_covs, kfac_a_invs, kfac_g_invs = self._native_kfac_args(kfac_optimizer)
             active = list(active_layers if active_layers is not None else sorted(kfac_optimizer.active_layers or range(1, self.config.layers + 1)))
+            if self.output_adapter_enabled:
+                output_adapter_down = self.output_adapter_down.contiguous()
+                output_adapter_up = self.output_adapter_up.contiguous()
+            else:
+                output_adapter_down = torch.empty(0, device=self.gamma_out.device, dtype=torch.float32)
+                output_adapter_up = torch.empty(0, device=self.gamma_out.device, dtype=torch.float32)
             result = _load_extension().silex_train_chunk_cuda(
                 ids,
                 state.contiguous(),
@@ -694,6 +700,9 @@ class SilexCodeT18_6B_R64(nn.Module):
                 loss_mask.contiguous(),
                 teacher_logits_final,
                 *self._native_args(),
+                output_adapter_down,
+                output_adapter_up,
+                bool(self.output_adapter_enabled),
                 bool(self.deterministic_backbone),
                 kfac_a_covs,
                 kfac_g_covs,

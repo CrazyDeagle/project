@@ -33,6 +33,8 @@ def main() -> None:
     parser.add_argument("--require-thresholds", action="store_true")
     parser.add_argument("--generate-eval-outputs", action="store_true")
     parser.add_argument("--enable-ssd", action="store_true")
+    parser.add_argument("--enable-output-adapter", action="store_true")
+    parser.add_argument("--output-adapter-rank", type=int, default=64)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--stages", default="1,2,3")
     args = parser.parse_args()
@@ -43,8 +45,17 @@ def main() -> None:
         raise RuntimeError("CUDA is required")
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    model = SilexCodeT18_6B_R64(device="cuda")
-    optimizer = BlockKFACOptimizer(plastic_named_parameters(model), lr=0.04, damping=3e-4, trust_region=5e-4)
+    model = SilexCodeT18_6B_R64(
+        device="cuda",
+        enable_output_adapter=args.enable_output_adapter,
+        output_adapter_rank=args.output_adapter_rank,
+    )
+    kfac_params = (
+        (name, param)
+        for name, param in plastic_named_parameters(model)
+        if not name.startswith("output_adapter_")
+    )
+    optimizer = BlockKFACOptimizer(kfac_params, lr=0.04, damping=3e-4, trust_region=5e-4)
     if args.resume:
         try:
             import_plastic_checkpoint(model, args.resume, kfac_optimizer=optimizer)

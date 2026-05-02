@@ -1670,6 +1670,9 @@ pybind11::dict silex_train_chunk_cuda_update(
     std::vector<torch::Tensor> z_alphas,
     torch::Tensor gamma_z,
     torch::Tensor gamma_out,
+    torch::Tensor output_adapter_down,
+    torch::Tensor output_adapter_up,
+    bool use_output_adapter,
     bool deterministic_backbone,
     std::vector<torch::Tensor> kfac_a_covs,
     std::vector<torch::Tensor> kfac_g_covs,
@@ -1789,7 +1792,8 @@ pybind11::dict silex_train_chunk_cuda_update(
     z_trace.select(0, 0).narrow(0, 0, T).copy_(x);
     auto cur = z_trace.select(0, 0).narrow(0, 0, T);
     auto out0 = rms_norm_native(cur.contiguous(), gamma_out.contiguous(), EPS_NORM);
-    logits_by_depth.push_back(tlinear_forward_native(out0, e_wpack.contiguous(), e_alpha.contiguous(), D_MODEL, VOCAB_SIZE).to(torch::kFloat32));
+    auto base0 = tlinear_forward_native(out0, e_wpack.contiguous(), e_alpha.contiguous(), D_MODEL, VOCAB_SIZE).to(torch::kFloat32);
+    logits_by_depth.push_back(apply_output_adapter_logits(out0, base0, output_adapter_down, output_adapter_up, use_output_adapter));
     for (int k = 1; k <= 4; ++k) {
         auto n = rms_norm_native(cur.contiguous(), gamma_z.contiguous(), EPS_NORM);
         auto zab = silex_tlinear_forward_multi_select(
@@ -1811,7 +1815,8 @@ pybind11::dict silex_train_chunk_cuda_update(
         z_trace.select(0, k).narrow(0, 0, T).copy_(next);
         cur = z_trace.select(0, k).narrow(0, 0, T);
         auto outk = rms_norm_native(cur.contiguous(), gamma_out.contiguous(), EPS_NORM);
-        logits_by_depth.push_back(tlinear_forward_native(outk, e_wpack.contiguous(), e_alpha.contiguous(), D_MODEL, VOCAB_SIZE).to(torch::kFloat32));
+        auto basek = tlinear_forward_native(outk, e_wpack.contiguous(), e_alpha.contiguous(), D_MODEL, VOCAB_SIZE).to(torch::kFloat32);
+        logits_by_depth.push_back(apply_output_adapter_logits(outk, basek, output_adapter_down, output_adapter_up, use_output_adapter));
     }
     profiler.mark("latent_forward_done");
 
@@ -1829,7 +1834,12 @@ pybind11::dict silex_train_chunk_cuda_update(
     dz.reserve(5);
     for (int k = 0; k < 5; ++k) {
         auto zk = z_trace.select(0, k).narrow(0, 0, T);
-        auto d_out = tlinear_backward_input_native(grad_result.dlogits[static_cast<size_t>(k)], e_wpack.contiguous(), e_alpha.contiguous(), D_MODEL);
+        auto d_logits = grad_result.dlogits[static_cast<size_t>(k)].contiguous();
+        auto d_out = tlinear_backward_input_native(d_logits, e_wpack.contiguous(), e_alpha.contiguous(), D_MODEL);
+        if (use_output_adapter) {
+            auto d_hidden = torch::matmul(d_logits.to(torch::kFloat32), output_adapter_up.contiguous());
+            d_out.add_(torch::matmul(d_hidden, output_adapter_down.contiguous()));
+        }
         dz.push_back(rms_norm_backward_native(zk.contiguous(), gamma_out.contiguous(), d_out.contiguous(), EPS_NORM).contiguous());
     }
     grad_result.dlogits.clear();
