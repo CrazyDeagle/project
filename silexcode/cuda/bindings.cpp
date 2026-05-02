@@ -1312,7 +1312,28 @@ std::pair<double, double> apply_global_kfac_step(
     return {nu, chi};
 }
 
-std::tuple<torch::Tensor, torch::Tensor, std::vector<torch::Tensor>> silex_forward_cuda(
+torch::Tensor apply_output_adapter_logits(
+    torch::Tensor normalized,
+    torch::Tensor base_logits,
+    torch::Tensor output_adapter_down,
+    torch::Tensor output_adapter_up,
+    bool use_output_adapter
+) {
+    if (!use_output_adapter) {
+        return base_logits;
+    }
+    TORCH_CHECK(output_adapter_down.is_cuda() && output_adapter_up.is_cuda(), "output adapter tensors must be CUDA");
+    TORCH_CHECK(output_adapter_down.scalar_type() == torch::kFloat32, "output_adapter_down must be fp32");
+    TORCH_CHECK(output_adapter_up.scalar_type() == torch::kFloat32, "output_adapter_up must be fp32");
+    TORCH_CHECK(output_adapter_down.dim() == 2 && output_adapter_down.size(1) == D_MODEL, "output_adapter_down must be [rank,4096]");
+    TORCH_CHECK(output_adapter_up.dim() == 2 && output_adapter_up.size(0) == VOCAB_SIZE, "output_adapter_up must be [258,rank]");
+    TORCH_CHECK(output_adapter_up.size(1) == output_adapter_down.size(0), "output adapter rank mismatch");
+    auto hidden = torch::matmul(normalized.to(torch::kFloat32), output_adapter_down.contiguous().transpose(0, 1));
+    auto delta = torch::matmul(hidden, output_adapter_up.contiguous().transpose(0, 1));
+    return base_logits + delta;
+}
+
+std::tuple<torch::Tensor, torch::Tensor, std::vector<torch::Tensor>> silex_forward_cuda_impl(
     torch::Tensor token_ids,
     torch::Tensor state,
     torch::Tensor e_wpack,
@@ -1331,6 +1352,9 @@ std::tuple<torch::Tensor, torch::Tensor, std::vector<torch::Tensor>> silex_forwa
     std::vector<torch::Tensor> z_alphas,
     torch::Tensor gamma_z,
     torch::Tensor gamma_out,
+    torch::Tensor output_adapter_down,
+    torch::Tensor output_adapter_up,
+    bool use_output_adapter,
     int64_t K,
     bool return_all_depths,
     bool deterministic_backbone
@@ -1413,7 +1437,8 @@ std::tuple<torch::Tensor, torch::Tensor, std::vector<torch::Tensor>> silex_forwa
     auto cur = x;
     if (return_all_depths) {
         auto out0 = rms_norm_native(cur.contiguous(), gamma_out.contiguous(), EPS_NORM);
-        logits_by_depth.push_back(tlinear_forward_native(out0, e_wpack.contiguous(), e_alpha.contiguous(), D_MODEL, VOCAB_SIZE).to(torch::kFloat32));
+        auto base0 = tlinear_forward_native(out0, e_wpack.contiguous(), e_alpha.contiguous(), D_MODEL, VOCAB_SIZE).to(torch::kFloat32);
+        logits_by_depth.push_back(apply_output_adapter_logits(out0, base0, output_adapter_down, output_adapter_up, use_output_adapter));
     }
 
     for (int64_t k = 0; k < K; ++k) {
@@ -1427,7 +1452,8 @@ std::tuple<torch::Tensor, torch::Tensor, std::vector<torch::Tensor>> silex_forwa
         cur = residual_native(cur.contiguous(), z3.contiguous(), zero.contiguous(), RHO_Z);
         if (return_all_depths) {
             auto outk = rms_norm_native(cur.contiguous(), gamma_out.contiguous(), EPS_NORM);
-            logits_by_depth.push_back(tlinear_forward_native(outk, e_wpack.contiguous(), e_alpha.contiguous(), D_MODEL, VOCAB_SIZE).to(torch::kFloat32));
+            auto basek = tlinear_forward_native(outk, e_wpack.contiguous(), e_alpha.contiguous(), D_MODEL, VOCAB_SIZE).to(torch::kFloat32);
+            logits_by_depth.push_back(apply_output_adapter_logits(outk, basek, output_adapter_down, output_adapter_up, use_output_adapter));
         }
     }
 
@@ -1436,9 +1462,114 @@ std::tuple<torch::Tensor, torch::Tensor, std::vector<torch::Tensor>> silex_forwa
         logits = logits_by_depth.back();
     } else {
         auto out = rms_norm_native(cur.contiguous(), gamma_out.contiguous(), EPS_NORM);
-        logits = tlinear_forward_native(out, e_wpack.contiguous(), e_alpha.contiguous(), D_MODEL, VOCAB_SIZE).to(torch::kFloat32);
+        auto base = tlinear_forward_native(out, e_wpack.contiguous(), e_alpha.contiguous(), D_MODEL, VOCAB_SIZE).to(torch::kFloat32);
+        logits = apply_output_adapter_logits(out, base, output_adapter_down, output_adapter_up, use_output_adapter);
     }
     return std::make_tuple(logits, new_state, logits_by_depth);
+}
+
+std::tuple<torch::Tensor, torch::Tensor, std::vector<torch::Tensor>> silex_forward_cuda(
+    torch::Tensor token_ids,
+    torch::Tensor state,
+    torch::Tensor e_wpack,
+    torch::Tensor e_alpha,
+    std::vector<torch::Tensor> layer_wpacks,
+    std::vector<torch::Tensor> layer_alphas,
+    std::vector<torch::Tensor> gamma_m,
+    std::vector<torch::Tensor> gamma_f,
+    std::vector<torch::Tensor> lambda_raw,
+    std::vector<torch::Tensor> beta_raw,
+    std::vector<torch::Tensor> A_m,
+    std::vector<torch::Tensor> B_m,
+    std::vector<torch::Tensor> A_f,
+    std::vector<torch::Tensor> B_f,
+    std::vector<torch::Tensor> z_wpacks,
+    std::vector<torch::Tensor> z_alphas,
+    torch::Tensor gamma_z,
+    torch::Tensor gamma_out,
+    int64_t K,
+    bool return_all_depths,
+    bool deterministic_backbone
+) {
+    return silex_forward_cuda_impl(
+        token_ids,
+        state,
+        e_wpack,
+        e_alpha,
+        layer_wpacks,
+        layer_alphas,
+        gamma_m,
+        gamma_f,
+        lambda_raw,
+        beta_raw,
+        A_m,
+        B_m,
+        A_f,
+        B_f,
+        z_wpacks,
+        z_alphas,
+        gamma_z,
+        gamma_out,
+        torch::Tensor(),
+        torch::Tensor(),
+        false,
+        K,
+        return_all_depths,
+        deterministic_backbone
+    );
+}
+
+std::tuple<torch::Tensor, torch::Tensor, std::vector<torch::Tensor>> silex_forward_cuda_output_adapter(
+    torch::Tensor token_ids,
+    torch::Tensor state,
+    torch::Tensor e_wpack,
+    torch::Tensor e_alpha,
+    std::vector<torch::Tensor> layer_wpacks,
+    std::vector<torch::Tensor> layer_alphas,
+    std::vector<torch::Tensor> gamma_m,
+    std::vector<torch::Tensor> gamma_f,
+    std::vector<torch::Tensor> lambda_raw,
+    std::vector<torch::Tensor> beta_raw,
+    std::vector<torch::Tensor> A_m,
+    std::vector<torch::Tensor> B_m,
+    std::vector<torch::Tensor> A_f,
+    std::vector<torch::Tensor> B_f,
+    std::vector<torch::Tensor> z_wpacks,
+    std::vector<torch::Tensor> z_alphas,
+    torch::Tensor gamma_z,
+    torch::Tensor gamma_out,
+    torch::Tensor output_adapter_down,
+    torch::Tensor output_adapter_up,
+    int64_t K,
+    bool return_all_depths,
+    bool deterministic_backbone
+) {
+    return silex_forward_cuda_impl(
+        token_ids,
+        state,
+        e_wpack,
+        e_alpha,
+        layer_wpacks,
+        layer_alphas,
+        gamma_m,
+        gamma_f,
+        lambda_raw,
+        beta_raw,
+        A_m,
+        B_m,
+        A_f,
+        B_f,
+        z_wpacks,
+        z_alphas,
+        gamma_z,
+        gamma_out,
+        output_adapter_down,
+        output_adapter_up,
+        true,
+        K,
+        return_all_depths,
+        deterministic_backbone
+    );
 }
 
 int64_t silex_train_workspace_bytes(int64_t sequence_len) {
@@ -2085,6 +2216,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("block_kfac_update_curvature", &block_kfac_update_curvature, "Block-KFAC curvature update CUDA");
     m.def("block_kfac_step_param", &block_kfac_step_param, "Block-KFAC single-parameter natural update CUDA");
     m.def("silex_forward_cuda", &silex_forward_cuda, "SilexCode native full forward CUDA");
+    m.def("silex_forward_cuda_output_adapter", &silex_forward_cuda_output_adapter, "SilexCode native full forward CUDA with experimental output adapter");
     m.def("silex_train_workspace_bytes", &silex_train_workspace_bytes, "Static training workspace bytes");
     m.def("silex_train_workspace_layout", &silex_train_workspace_layout, "Static training workspace layout");
     m.def("silex_train_chunk_cuda", &silex_train_chunk_cuda, "SilexCode native training chunk CUDA");

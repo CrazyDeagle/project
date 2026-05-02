@@ -199,3 +199,37 @@ def test_silex_forward_cuda_zero_model_smoke() -> None:
     assert len(depths) == 2
     assert torch.all(logits == 0)
     assert torch.all(new_state == 0)
+
+    if not hasattr(ext, "silex_forward_cuda_output_adapter"):
+        pytest.skip("local extension was not rebuilt with output adapter binding")
+
+    output_down = torch.randn(64, 4096, dtype=torch.float32, device=device) * 0.01
+    output_up = torch.zeros(258, 64, dtype=torch.float32, device=device)
+    adapter_logits, adapter_state, adapter_depths = ext.silex_forward_cuda_output_adapter(
+        tokens,
+        state,
+        e_wpack,
+        e_alpha,
+        layer_wpacks,
+        layer_alphas,
+        gamma_m,
+        gamma_f,
+        lambda_raw,
+        beta_raw,
+        A_m,
+        B_m,
+        A_f,
+        B_f,
+        z_wpacks,
+        z_alphas,
+        gamma_z,
+        gamma_out,
+        output_down,
+        output_up,
+        1,
+        True,
+        False,
+    )
+    assert torch.equal(adapter_logits, logits)
+    assert torch.equal(adapter_state, new_state)
+    assert len(adapter_depths) == len(depths)

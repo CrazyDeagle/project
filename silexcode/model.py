@@ -595,14 +595,26 @@ class SilexCodeT18_6B_R64(nn.Module):
             raise ValueError("token ids must be in [0,257]")
         ids = token_ids.to(device=self.gamma_out.device, dtype=torch.uint16, non_blocking=True).contiguous()
         args = self._native_args()
-        logits, new_state, logits_by_depth = _load_extension().silex_forward_cuda(
-            ids,
-            state.contiguous(),
-            *args,
-            int(k),
-            bool(return_all_depths),
-            bool(self.deterministic_backbone),
-        )
+        if self.output_adapter_enabled:
+            logits, new_state, logits_by_depth = _load_extension().silex_forward_cuda_output_adapter(
+                ids,
+                state.contiguous(),
+                *args,
+                self.output_adapter_down.contiguous(),
+                self.output_adapter_up.contiguous(),
+                int(k),
+                bool(return_all_depths),
+                bool(self.deterministic_backbone),
+            )
+        else:
+            logits, new_state, logits_by_depth = _load_extension().silex_forward_cuda(
+                ids,
+                state.contiguous(),
+                *args,
+                int(k),
+                bool(return_all_depths),
+                bool(self.deterministic_backbone),
+            )
         return (logits_by_depth if return_all_depths else logits), new_state
 
     def train_workspace_bytes(self) -> int:
@@ -725,7 +737,7 @@ class SilexCodeT18_6B_R64(nn.Module):
         k: int | None = None,
         return_all_depths: bool = False,
     ):
-        if self.use_native_runtime and not torch.is_grad_enabled() and not self.output_adapter_enabled:
+        if self.use_native_runtime and not torch.is_grad_enabled():
             return self.forward_native(token_ids, state=state, k=k, return_all_depths=return_all_depths)
         return self.forward_python_reference(token_ids, state=state, k=k, return_all_depths=return_all_depths)
 

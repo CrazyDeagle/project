@@ -66,6 +66,28 @@ def _tensor_manifest(tensors: dict[str, torch.Tensor]) -> dict[str, dict[str, An
     }
 
 
+def _output_adapter_metadata(model: SilexCodeT18_6B_R64) -> dict[str, Any]:
+    enabled = bool(getattr(model, "output_adapter_enabled", False))
+    return {
+        "enabled": enabled,
+        "rank": int(getattr(model, "output_adapter_rank", 0)) if enabled else 0,
+    }
+
+
+def _validate_output_adapter_metadata(model: SilexCodeT18_6B_R64, meta: dict[str, Any] | None, *, plastic_names: set[str] | None = None) -> None:
+    if not isinstance(meta, dict):
+        meta = None
+    plastic_has_output = bool(plastic_names and any(name.startswith("output_adapter_") for name in plastic_names))
+    enabled = bool((meta or {}).get("enabled", plastic_has_output))
+    if not enabled and not plastic_has_output:
+        return
+    if not bool(getattr(model, "output_adapter_enabled", False)):
+        raise ValueError("SILEX_OUTPUT_ADAPTER_CHECKPOINT_REQUIRES_ENABLE_OUTPUT_ADAPTER")
+    rank = int((meta or {}).get("rank", getattr(model, "output_adapter_rank", 0)))
+    if rank != int(getattr(model, "output_adapter_rank", 0)):
+        raise ValueError(f"SILEX_OUTPUT_ADAPTER_RANK_MISMATCH:{rank}!={model.output_adapter_rank}")
+
+
 def _validate_state_dict(model: SilexCodeT18_6B_R64, state: dict[str, torch.Tensor]) -> None:
     expected = model.state_dict()
     missing = sorted(set(expected) - set(state))
@@ -121,6 +143,7 @@ def export_silex_checkpoint(
         "model_name": model.name,
         "config": vars(model.config),
         "deterministic_backbone": bool(model.deterministic_backbone),
+        "output_adapter": _output_adapter_metadata(model),
         "manifest": _tensor_manifest(tensors),
         "state_dict": tensors,
         "kfac_state": kfac_state,
@@ -145,6 +168,7 @@ def import_silex_checkpoint(
     state = payload.get("state_dict")
     if not isinstance(state, dict):
         raise ValueError("SILEX_CHECKPOINT_MISSING_STATE_DICT")
+    _validate_output_adapter_metadata(model, payload.get("output_adapter"))
     _validate_state_dict(model, state)
     model.load_state_dict(
         {name: tensor.to(device=model.gamma_out.device, non_blocking=True) for name, tensor in state.items()},
@@ -180,11 +204,15 @@ def export_plastic_checkpoint(
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     plastic = _plastic_state_dict(model)
+    meta = dict(metadata or {})
+    adapter_meta = _output_adapter_metadata(model)
+    if (adapter_meta["enabled"] or "output_adapter" in meta) and not isinstance(meta.get("output_adapter"), dict):
+        meta["output_adapter"] = _output_adapter_metadata(model)
     payload = {
         "magic": SILEX_PLASTIC_MAGIC,
         "version": SILEX_VERSION,
         "model_name": model.name,
-        "metadata": metadata or {},
+        "metadata": meta,
         "manifest": _tensor_manifest(plastic),
         "plastic_state": plastic,
         "kfac_state": _collect_kfac_state(kfac_optimizer) if include_kfac else None,
@@ -207,6 +235,12 @@ def import_plastic_checkpoint(
     plastic = payload.get("plastic_state")
     if not isinstance(plastic, dict):
         raise ValueError("SILEX_PLASTIC_CHECKPOINT_MISSING_STATE")
+    metadata = payload.get("metadata", {})
+    _validate_output_adapter_metadata(
+        model,
+        metadata.get("output_adapter") if isinstance(metadata, dict) else None,
+        plastic_names=set(plastic),
+    )
     params = dict(model.named_parameters())
     for name, tensor in plastic.items():
         if name not in params:

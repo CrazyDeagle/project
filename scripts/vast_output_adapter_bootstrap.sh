@@ -11,8 +11,14 @@ LOG_PATH="${OUT_DIR}.log"
 mkdir -p runs
 rm -rf "${OUT_DIR}"
 
+RESUME_ARGS=()
+if [[ -n "${RESUME_CHECKPOINT:-}" ]]; then
+  RESUME_ARGS=(--resume "${RESUME_CHECKPOINT}")
+fi
+
 nohup setsid /venv/main/bin/python -u run_bootstrap.py \
   --output-dir "${OUT_DIR}" \
+  "${RESUME_ARGS[@]}" \
   --enable-output-adapter \
   --output-adapter-only \
   --output-adapter-rank "${OUTPUT_ADAPTER_RANK:-64}" \
