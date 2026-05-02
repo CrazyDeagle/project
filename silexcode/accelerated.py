@@ -351,6 +351,18 @@ def train_accelerated_curriculum(
                 },
             )
 
+    export_plastic_checkpoint(
+        model,
+        Path(output_dir) / "accelerated_latest.plastic.silex",
+        kfac_optimizer=kfac_optimizer,
+        include_kfac=include_kfac_in_checkpoints,
+        metadata={
+            "global_update": global_update,
+            "stages": list(stages),
+            "optimizer": native_optimizer,
+            "include_kfac": include_kfac_in_checkpoints,
+        },
+    )
     return model
 
 
