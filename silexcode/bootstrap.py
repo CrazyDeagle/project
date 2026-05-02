@@ -308,3 +308,99 @@ def train_bootstrap(
         metadata={"global_update": global_update, "levels": list(levels)},
     )
     return model
+
+
+def train_bootstrap_output_adapter(
+    model,
+    optimizer: torch.optim.Optimizer,
+    output_dir: str,
+    *,
+    levels: tuple[int, ...] = BOOTSTRAP_LEVELS,
+    updates_per_level: int = 1000,
+    eval_every: int = 100,
+    val_size: int = 16,
+    max_records_per_chunk: int = 16,
+    candidate_multiplier: int = 4,
+    checkpoint_every_evals: int = 0,
+):
+    if not getattr(model, "output_adapter_enabled", False):
+        raise ValueError("output adapter bootstrap requires enable_output_adapter=True")
+
+    torch.manual_seed(123456789)
+    torch.cuda.manual_seed_all(123456789)
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+
+    global_update = 0
+    for level in levels:
+        record_cursor = 100_000_000 + level * 10_000_000
+        eval_count = 0
+        validation_indices = [900_000_000 + level * 100_000 + i for i in range(val_size)]
+        for local_update in range(updates_per_level):
+            chunk = generate_bootstrap_chunk(
+                level,
+                record_cursor,
+                max_records=max_records_per_chunk,
+                candidate_multiplier=candidate_multiplier,
+            )
+            record_cursor += max_records_per_chunk * max(1, candidate_multiplier)
+            input_ids = torch.tensor(chunk.token_ids[:-1], device="cuda", dtype=torch.long)
+            labels = torch.tensor(chunk.labels, device="cuda", dtype=torch.long)
+            mask = torch.tensor(chunk.loss_mask, device="cuda", dtype=torch.float32)
+
+            step_start = time.perf_counter()
+            optimizer.zero_grad(set_to_none=True)
+            logits_by_k = model_forward_train(model, input_ids)
+            depth = compute_depth_losses(logits_by_k, labels, mask)
+            loss = depth["nll"] + 0.10 * depth["mono"]
+            loss.backward()
+            optimizer.step()
+            step_seconds = time.perf_counter() - step_start
+            global_update += 1
+
+            if local_update % eval_every == 0:
+                val_metrics = evaluate_bootstrap(model, level, validation_indices)
+                row = {
+                    "bootstrap_level": level,
+                    "global_update": global_update,
+                    "local_update": local_update,
+                    "indices": chunk.indices,
+                    "levels": chunk.levels,
+                    "target_tokens": chunk.target_tokens,
+                    "target_fraction": chunk.target_tokens / float(SEQ_LEN - 1),
+                    "train": {
+                        "loss": float(loss.detach().cpu()),
+                        "nll": float(depth["nll"].detach().cpu()),
+                        "mono": float(depth["mono"].detach().cpu()),
+                        "nll4": float(depth["nll_by_k"][4].detach().cpu()),
+                        "latent_gain": float(depth["latent_gain"].detach().cpu()),
+                        "step_seconds": float(step_seconds),
+                        "updates_per_minute": float(60.0 / max(step_seconds, 1.0e-9)),
+                        "max_memory_allocated_mb": float(torch.cuda.max_memory_allocated() / (1024**2)),
+                    },
+                    "validation": val_metrics,
+                }
+                _save_jsonl(output_dir, row)
+                eval_count += 1
+                if checkpoint_every_evals > 0 and eval_count % checkpoint_every_evals == 0:
+                    export_plastic_checkpoint(
+                        model,
+                        Path(output_dir) / f"bootstrap_level_{level}_update_{global_update}.plastic.silex",
+                        kfac_optimizer=None,
+                        include_kfac=False,
+                        metadata={
+                            "bootstrap_level": level,
+                            "global_update": global_update,
+                            "local_update": local_update,
+                            "output_adapter": True,
+                        },
+                    )
+
+    export_plastic_checkpoint(
+        model,
+        Path(output_dir) / "bootstrap_latest.plastic.silex",
+        kfac_optimizer=None,
+        include_kfac=False,
+        metadata={"global_update": global_update, "levels": list(levels), "output_adapter": True},
+    )
+    return model

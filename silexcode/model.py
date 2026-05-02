@@ -85,6 +85,21 @@ def _plastic_a(layer_zero_based: int, kind: str, device: torch.device) -> torch.
     return torch.where((parity & 1).eq(0), 1.0, -1.0).to(torch.float32).mul_(2.0**-6)
 
 
+def _output_adapter_down(rank: int, d_model: int, device: torch.device) -> torch.Tensor:
+    device = torch.device(device)
+    rows = torch.arange(rank, device=device, dtype=torch.int64).view(rank, 1)
+    cols = torch.arange(d_model, device=device, dtype=torch.int64).view(1, d_model)
+    x = torch.bitwise_and(rows, cols)
+    parity = x
+    parity = torch.bitwise_xor(parity, parity >> 32)
+    parity = torch.bitwise_xor(parity, parity >> 16)
+    parity = torch.bitwise_xor(parity, parity >> 8)
+    parity = torch.bitwise_xor(parity, parity >> 4)
+    parity = torch.bitwise_xor(parity, parity >> 2)
+    parity = torch.bitwise_xor(parity, parity >> 1)
+    return torch.where((parity & 1).eq(0), 1.0, -1.0).to(torch.float32).mul_(2.0**-6)
+
+
 def rms_norm(x: torch.Tensor, gamma: torch.Tensor, eps: float) -> torch.Tensor:
     return _load_extension().rms_norm_forward(x.contiguous(), gamma.contiguous(), float(eps))
 
@@ -385,10 +400,14 @@ class SilexCodeT18_6B_R64(nn.Module):
         *,
         device: torch.device | str = "cuda",
         deterministic: bool = True,
+        enable_output_adapter: bool = False,
+        output_adapter_rank: int = 64,
     ) -> None:
         super().__init__()
         if config.vocab_size != 258:
             raise ValueError("V must be exactly 258")
+        if output_adapter_rank < 1:
+            raise ValueError("output_adapter_rank must be positive")
         self.config = config
         self.embedding = TernaryEmbedding(device=device, deterministic=deterministic)
         self.layers = nn.ModuleList(
@@ -396,6 +415,15 @@ class SilexCodeT18_6B_R64(nn.Module):
         )
         self.reasoner = LatentReasoner(config, device, deterministic)
         self.register_buffer("gamma_out", torch.ones(config.d_model, dtype=torch.bfloat16, device=device), persistent=True)
+        self.output_adapter_enabled = bool(enable_output_adapter)
+        self.output_adapter_rank = int(output_adapter_rank)
+        if self.output_adapter_enabled:
+            self.output_adapter_down = nn.Parameter(
+                _output_adapter_down(self.output_adapter_rank, config.d_model, torch.device(device))
+            )
+            self.output_adapter_up = nn.Parameter(
+                torch.zeros(config.vocab_size, self.output_adapter_rank, dtype=torch.float32, device=device)
+            )
 
         for p in self.embedding.parameters():
             p.requires_grad_(False)
@@ -405,7 +433,22 @@ class SilexCodeT18_6B_R64(nn.Module):
 
     def _freeze_non_plastic(self) -> None:
         for name, param in self.named_parameters():
-            param.requires_grad_(name.endswith(("A_m", "B_m", "A_f", "B_f")))
+            is_plastic = name.endswith(("A_m", "B_m", "A_f", "B_f"))
+            is_output_adapter = self.output_adapter_enabled and name in {
+                "output_adapter_down",
+                "output_adapter_up",
+            }
+            param.requires_grad_(is_plastic or is_output_adapter)
+
+    def output_adapter_parameters(self) -> list[nn.Parameter]:
+        if not self.output_adapter_enabled:
+            return []
+        return [self.output_adapter_down, self.output_adapter_up]
+
+    def freeze_internal_plastic_adapters(self) -> None:
+        for name, param in self.named_parameters():
+            if name.endswith(("A_m", "B_m", "A_f", "B_f")):
+                param.requires_grad_(False)
 
     def initial_state(self) -> torch.Tensor:
         cfg = self.config
@@ -431,7 +474,11 @@ class SilexCodeT18_6B_R64(nn.Module):
         logits = []
         for z in zs:
             o = rms_norm(z, self.gamma_out, self.config.eps_norm)
-            logits.append(_TLinearFn.apply(o.contiguous(), self.embedding.wpack, self.embedding.alpha).float())
+            base_logits = _TLinearFn.apply(o.contiguous(), self.embedding.wpack, self.embedding.alpha).float()
+            if self.output_adapter_enabled:
+                hidden = torch.nn.functional.linear(o.float(), self.output_adapter_down)
+                base_logits = base_logits + torch.nn.functional.linear(hidden, self.output_adapter_up)
+            logits.append(base_logits)
         return logits
 
     def _native_args(self):
@@ -678,7 +725,7 @@ class SilexCodeT18_6B_R64(nn.Module):
         k: int | None = None,
         return_all_depths: bool = False,
     ):
-        if self.use_native_runtime and not torch.is_grad_enabled():
+        if self.use_native_runtime and not torch.is_grad_enabled() and not self.output_adapter_enabled:
             return self.forward_native(token_ids, state=state, k=k, return_all_depths=return_all_depths)
         return self.forward_python_reference(token_ids, state=state, k=k, return_all_depths=return_all_depths)
 

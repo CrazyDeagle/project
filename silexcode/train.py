@@ -191,7 +191,11 @@ def stage_ready(stage: int, metrics: dict) -> bool:
 
 
 def model_forward_train(model, input_ids_t: torch.Tensor):
-    if hasattr(model, "forward_native") and not torch.is_grad_enabled():
+    if (
+        hasattr(model, "forward_native")
+        and not torch.is_grad_enabled()
+        and not getattr(model, "output_adapter_enabled", False)
+    ):
         logits, _state = model.forward_native(input_ids_t, k=K_TRAIN, return_all_depths=True)
         return torch.stack([(x[:-1] if x.shape[0] == SEQ_LEN else x).float() for x in logits], dim=0)
     if hasattr(model, "forward_train"):
