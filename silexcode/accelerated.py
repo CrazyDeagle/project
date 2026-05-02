@@ -176,6 +176,7 @@ def train_accelerated_curriculum(
     eta_scale: float = 1.0,
     damping_scale: float = 1.0,
     trust_scale: float = 1.0,
+    native_optimizer: str = "kfac",
     checkpoint_every_evals: int = 0,
     include_kfac_in_checkpoints: bool = False,
     require_thresholds: bool = True,
@@ -279,6 +280,7 @@ def train_accelerated_curriculum(
                 damping=stage_damping,
                 trust_region_delta=stage_delta,
                 teacher_logits_final=teacher_logits,
+                native_optimizer=native_optimizer,
             )
             step_seconds = time.perf_counter() - step_start
 

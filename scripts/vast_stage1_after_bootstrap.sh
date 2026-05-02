@@ -36,6 +36,7 @@ nohup setsid /venv/main/bin/python -u run_accelerated_curriculum.py \
   --eta-scale "${ETA_SCALE:-0.1}" \
   --damping-scale "${DAMPING_SCALE:-10}" \
   --trust-scale "${TRUST_SCALE:-0.03}" \
+  --native-optimizer "${NATIVE_OPTIMIZER:-kfac}" \
   > "${LOG_PATH}" 2>&1 < /dev/null &
 
 echo "started_pid=$!"

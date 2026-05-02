@@ -1312,6 +1312,28 @@ std::pair<double, double> apply_global_kfac_step(
     return {nu, chi};
 }
 
+std::tuple<double, double, double> apply_global_sgd_step(
+    const std::vector<torch::Tensor>& params,
+    const std::vector<torch::Tensor>& grads,
+    double eta,
+    double weight_decay
+) {
+    if (params.empty()) {
+        return std::make_tuple(0.0, 0.0, 1.0);
+    }
+    torch::Tensor grad_norm_t = torch::zeros({}, torch::TensorOptions().device(params[0].device()).dtype(torch::kFloat32));
+    torch::Tensor update_norm_t = torch::zeros_like(grad_norm_t);
+    for (size_t idx = 0; idx < params.size(); ++idx) {
+        auto grad_bar = grads[idx] + weight_decay * params[idx];
+        grad_norm_t = grad_norm_t + grad_bar.square().sum();
+        params[idx].add_(grad_bar, -eta);
+        update_norm_t = update_norm_t + grad_bar.square().sum() * (eta * eta);
+    }
+    double grad_norm = grad_norm_t.item<double>();
+    double update_norm = update_norm_t.item<double>();
+    return std::make_tuple(grad_norm, update_norm, 1.0);
+}
+
 torch::Tensor apply_output_adapter_logits(
     torch::Tensor normalized,
     torch::Tensor base_logits,
@@ -1679,6 +1701,7 @@ pybind11::dict silex_train_chunk_cuda_update(
     std::vector<torch::Tensor> kfac_a_invs,
     std::vector<torch::Tensor> kfac_g_invs,
     std::vector<int64_t> active_layers,
+    int64_t native_optimizer,
     int64_t stage,
     double eta,
     double damping,
@@ -2076,18 +2099,28 @@ pybind11::dict silex_train_chunk_cuda_update(
     }
     profiler.mark("backward_layers_done");
 
-    auto kfac_step = apply_global_kfac_step(
-        step_params,
-        step_grads,
-        step_a_invs,
-        step_g_invs,
-        eta,
-        weight_decay,
-        trust_region_delta,
-        eps_opt
-    );
-    double nu = kfac_step.first;
-    double chi = kfac_step.second;
+    double nu = 0.0;
+    double chi = 1.0;
+    double update_norm = 0.0;
+    if (native_optimizer == 1) {
+        auto sgd_step = apply_global_sgd_step(step_params, step_grads, eta, weight_decay);
+        nu = std::get<0>(sgd_step);
+        update_norm = std::get<1>(sgd_step);
+        chi = std::get<2>(sgd_step);
+    } else {
+        auto kfac_step = apply_global_kfac_step(
+            step_params,
+            step_grads,
+            step_a_invs,
+            step_g_invs,
+            eta,
+            weight_decay,
+            trust_region_delta,
+            eps_opt
+        );
+        nu = kfac_step.first;
+        chi = kfac_step.second;
+    }
     profiler.mark("kfac_step_done");
 
     constexpr double omega[5] = {2.0 / 30.0, 4.0 / 30.0, 6.0 / 30.0, 8.0 / 30.0, 10.0 / 30.0};
@@ -2108,6 +2141,8 @@ pybind11::dict silex_train_chunk_cuda_update(
     out["latent_gain"] = grad_result.latent_gain;
     out["natural_norm"] = nu;
     out["trust_chi"] = chi;
+    out["update_norm"] = update_norm;
+    out["native_optimizer"] = native_optimizer;
     out["updated_matrices"] = static_cast<int64_t>(step_params.size());
     return out;
 }

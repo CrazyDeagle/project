@@ -28,6 +28,7 @@ def main() -> None:
     parser.add_argument("--eta-scale", type=float, default=1.0)
     parser.add_argument("--damping-scale", type=float, default=1.0)
     parser.add_argument("--trust-scale", type=float, default=1.0)
+    parser.add_argument("--native-optimizer", choices=["kfac", "sgd"], default="kfac")
     parser.add_argument("--checkpoint-every-evals", type=int, default=0)
     parser.add_argument("--include-kfac", action="store_true")
     parser.add_argument("--require-thresholds", action="store_true")
@@ -117,6 +118,7 @@ def main() -> None:
             eta_scale=args.eta_scale,
             damping_scale=args.damping_scale,
             trust_scale=args.trust_scale,
+            native_optimizer=args.native_optimizer,
             checkpoint_every_evals=args.checkpoint_every_evals,
             include_kfac_in_checkpoints=args.include_kfac,
             require_thresholds=require_thresholds,

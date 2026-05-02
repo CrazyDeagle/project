@@ -648,6 +648,7 @@ class SilexCodeT18_6B_R64(nn.Module):
         damping: float | None = None,
         trust_region_delta: float | None = None,
         teacher_logits_final: torch.Tensor | None = None,
+        native_optimizer: str = "kfac",
     ):
         if state is None:
             state = self.initial_state()
@@ -709,6 +710,7 @@ class SilexCodeT18_6B_R64(nn.Module):
                 kfac_a_invs,
                 kfac_g_invs,
                 active,
+                1 if native_optimizer == "sgd" else 0,
                 int(stage),
                 float(kfac_optimizer.lr if eta is None else eta),
                 float(kfac_optimizer.damping if damping is None else damping),
