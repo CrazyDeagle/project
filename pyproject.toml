@@ -1,0 +1,125 @@
+[build-system]
+# We keep setup.py around because the CUDA extension is built with
+# torch.utils.cpp_extension, which still needs the legacy build path.
+requires = ["setuptools>=68", "wheel", "torch>=2.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "silexcode"
+version = "0.1.0"
+description = "CUDA/C++ and PyTorch implementation of the SilexCode-T18.6B-R64 TDD architecture."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "SilexCode Contributors" }]
+keywords = [
+    "machine-learning",
+    "cuda",
+    "pytorch",
+    "language-model",
+    "curriculum-learning",
+    "k-fac",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: C++",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.1",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-xdist>=3.5",
+    "ruff>=0.5.0",
+    "mypy>=1.8",
+    "pre-commit>=3.6",
+]
+docs = [
+    "mkdocs>=1.5",
+    "mkdocs-material>=9.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/CrazyDeagle/project"
+Repository = "https://github.com/CrazyDeagle/project"
+Issues = "https://github.com/CrazyDeagle/project/issues"
+Changelog = "https://github.com/CrazyDeagle/project/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+# Source layout is the historical flat layout under silexcode/. Stick to it so
+# the CUDA build in setup.py keeps resolving sources without changes.
+packages = ["silexcode"]
+
+# ----- Ruff ------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["runs", "build", "dist", "silexcode/cuda"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear
+    "UP",  # pyupgrade
+    "SIM", # simplify
+    "RUF", # ruff-specific
+]
+ignore = [
+    "E501",  # handled by formatter / long URLs in docs
+    "B008",  # default arg call — common with torch ops
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+"scripts/**" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+# ----- pytest ----------------------------------------------------------------
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+markers = [
+    "cuda: requires a CUDA-capable GPU and the compiled silexcode._C extension",
+    "slow: long-running tests (skipped by default in CI)",
+]
+filterwarnings = [
+    "error::DeprecationWarning",
+    "ignore::DeprecationWarning:torch.*",
+]
+
+# ----- mypy ------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+exclude = ["build/", "dist/", "runs/", "silexcode/cuda/"]
+
+[[tool.mypy.overrides]]
+module = "silexcode._C"
+ignore_missing_imports = true
