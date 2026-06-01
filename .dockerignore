@@ -1,0 +1,34 @@
+# VCS
+.git
+.gitignore
+.github
+
+# Build & cache
+build/
+dist/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime artefacts
+runs/
+*.silex
+*.pt
+*.pth
+*.bin
+*.log
+
+# Editor / OS
+.venv/
+.env
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Docs
+docs/_build/
+site/
