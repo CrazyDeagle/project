@@ -1,0 +1,10 @@
+# Default owners for everything in the repo.
+*                       @CrazyDeagle
+
+# CUDA / native sources need an explicit reviewer for ABI changes.
+/silexcode/cuda/        @CrazyDeagle
+/setup.py               @CrazyDeagle
+
+# CI and packaging
+/.github/               @CrazyDeagle
+/pyproject.toml         @CrazyDeagle
