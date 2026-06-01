@@ -6,8 +6,7 @@ from typing import Any
 import torch
 
 from .constants import s5
-from .model import SilexCodeT18_6B_R64, TLinear, TernaryEmbedding
-
+from .model import SilexCodeT18_6B_R64, TernaryEmbedding, TLinear
 
 SILEX_MAGIC = "SILEXCODE_T18_6B_R64"
 SILEX_PLASTIC_MAGIC = "SILEXCODE_T18_6B_R64_PLASTIC"
@@ -61,8 +60,7 @@ def load_silex_checkpoint(model: SilexCodeT18_6B_R64, root: str | Path) -> None:
 
 def _tensor_manifest(tensors: dict[str, torch.Tensor]) -> dict[str, dict[str, Any]]:
     return {
-        name: {"dtype": str(t.dtype), "shape": list(t.shape)}
-        for name, t in sorted(tensors.items())
+        name: {"dtype": str(t.dtype), "shape": list(t.shape)} for name, t in sorted(tensors.items())
     }
 
 
@@ -74,10 +72,17 @@ def _output_adapter_metadata(model: SilexCodeT18_6B_R64) -> dict[str, Any]:
     }
 
 
-def _validate_output_adapter_metadata(model: SilexCodeT18_6B_R64, meta: dict[str, Any] | None, *, plastic_names: set[str] | None = None) -> None:
+def _validate_output_adapter_metadata(
+    model: SilexCodeT18_6B_R64,
+    meta: dict[str, Any] | None,
+    *,
+    plastic_names: set[str] | None = None,
+) -> None:
     if not isinstance(meta, dict):
         meta = None
-    plastic_has_output = bool(plastic_names and any(name.startswith("output_adapter_") for name in plastic_names))
+    plastic_has_output = bool(
+        plastic_names and any(name.startswith("output_adapter_") for name in plastic_names)
+    )
     enabled = bool((meta or {}).get("enabled", plastic_has_output))
     if not enabled and not plastic_has_output:
         return
@@ -101,7 +106,9 @@ def _validate_state_dict(model: SilexCodeT18_6B_R64, state: dict[str, torch.Tens
         if got.dtype != ref.dtype:
             raise ValueError(f"SILEX_CHECKPOINT_DTYPE_MISMATCH:{name}:{got.dtype}!={ref.dtype}")
         if tuple(got.shape) != tuple(ref.shape):
-            raise ValueError(f"SILEX_CHECKPOINT_SHAPE_MISMATCH:{name}:{tuple(got.shape)}!={tuple(ref.shape)}")
+            raise ValueError(
+                f"SILEX_CHECKPOINT_SHAPE_MISMATCH:{name}:{tuple(got.shape)}!={tuple(ref.shape)}"
+            )
 
 
 def _collect_kfac_state(kfac_optimizer) -> dict[str, dict[str, torch.Tensor]] | None:
@@ -171,7 +178,10 @@ def import_silex_checkpoint(
     _validate_output_adapter_metadata(model, payload.get("output_adapter"))
     _validate_state_dict(model, state)
     model.load_state_dict(
-        {name: tensor.to(device=model.gamma_out.device, non_blocking=True) for name, tensor in state.items()},
+        {
+            name: tensor.to(device=model.gamma_out.device, non_blocking=True)
+            for name, tensor in state.items()
+        },
         strict=True,
     )
     if bool(payload.get("deterministic_backbone", False)):
@@ -206,7 +216,9 @@ def export_plastic_checkpoint(
     plastic = _plastic_state_dict(model)
     meta = dict(metadata or {})
     adapter_meta = _output_adapter_metadata(model)
-    if (adapter_meta["enabled"] or "output_adapter" in meta) and not isinstance(meta.get("output_adapter"), dict):
+    if (adapter_meta["enabled"] or "output_adapter" in meta) and not isinstance(
+        meta.get("output_adapter"), dict
+    ):
         meta["output_adapter"] = _output_adapter_metadata(model)
     payload = {
         "magic": SILEX_PLASTIC_MAGIC,

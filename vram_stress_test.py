@@ -34,11 +34,15 @@ def main() -> None:
     if args.mode == "packed":
         model.mark_checkpoint_backbone_loaded()
     torch.cuda.synchronize()
-    print(f"phase=model_init_done mode={args.mode} seconds={time.perf_counter() - t0:.3f}", flush=True)
+    print(
+        f"phase=model_init_done mode={args.mode} seconds={time.perf_counter() - t0:.3f}", flush=True
+    )
 
     model.eval()
     print("phase=kfac_init_begin", flush=True)
-    optimizer = BlockKFACOptimizer(plastic_named_parameters(model), lr=0.04, damping=3e-4, trust_region=5e-4)
+    optimizer = BlockKFACOptimizer(
+        plastic_named_parameters(model), lr=0.04, damping=3e-4, trust_region=5e-4
+    )
     optimizer.reset_curvature(active_layers=list(range(1, 65)), damping=3e-4)
     torch.cuda.synchronize()
     print(f"phase=kfac_init_done seconds={time.perf_counter() - t0:.3f}", flush=True)
@@ -71,7 +75,10 @@ def main() -> None:
             )
             state.zero_()
             torch.cuda.synchronize()
-            print(f"phase=train_step_done step={step} seconds={time.perf_counter() - step_t0:.3f}", flush=True)
+            print(
+                f"phase=train_step_done step={step} seconds={time.perf_counter() - step_t0:.3f}",
+                flush=True,
+            )
         torch.cuda.synchronize()
 
     peak_mb = torch.cuda.max_memory_allocated() / (1024**2)

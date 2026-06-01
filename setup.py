@@ -6,7 +6,6 @@ if "CUDA_HOME" not in os.environ and "CUDA_PATH" in os.environ:
 from setuptools import setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
-
 if os.name == "nt":
     cxx_flags = ["/O2", "/Zc:preprocessor"]
     nvcc_flags = ["-O3", "--use_fast_math", "-Xcompiler", "/Zc:preprocessor"]

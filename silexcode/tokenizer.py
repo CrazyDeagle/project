@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .constants import TOKEN_BOS, TOKEN_EOS, BYTE_MAX
+from .constants import BYTE_MAX, TOKEN_BOS, TOKEN_EOS
 
 
 class ByteLevelTokenizer:

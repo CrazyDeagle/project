@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from silexcode.bootstrap import build_bootstrap_chunk, generate_bootstrap_chunk, generate_bootstrap_record
+from silexcode.bootstrap import (
+    build_bootstrap_chunk,
+    generate_bootstrap_chunk,
+    generate_bootstrap_record,
+)
 from silexcode.dataset import ast_whitelist_ok
 
 

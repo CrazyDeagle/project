@@ -8,9 +8,14 @@ from pathlib import Path
 import torch
 
 from .checkpoint import export_plastic_checkpoint
-from .dataset import GLOBAL_SEED, RNG, assert_ascii, encode_ascii_record, encode_ascii_record_without_eos
+from .dataset import (
+    GLOBAL_SEED,
+    RNG,
+    assert_ascii,
+    encode_ascii_record,
+    encode_ascii_record_without_eos,
+)
 from .train import SEQ_LEN, compute_depth_losses, compute_token_diagnostics, model_forward_train
-
 
 BOOTSTRAP_STAGE = 0
 BOOTSTRAP_LEVELS = (0, 1, 2, 3, 4)
@@ -37,10 +42,7 @@ def _bootstrap_code(level: int, rng: RNG) -> str:
         false_expr = rng.choice(["b-a", "b+t", "a*b"])
         cond = rng.choice(["a<b", "a<=t", "a+b<t"])
         return (
-            "def f(a,b,t):\n"
-            f"    if {cond}:\n"
-            f"        return {true_expr}\n"
-            f"    return {false_expr}\n"
+            f"def f(a,b,t):\n    if {cond}:\n        return {true_expr}\n    return {false_expr}\n"
         )
     if level == 3:
         expr = rng.choice(["x[i]", "x[i]+1", "x[i]-1", "x[i]+i"])
@@ -117,7 +119,9 @@ def build_bootstrap_chunk(
     levels: list[int] = []
     target_tokens = 0
 
-    for _length, _order, record, segment, prefix_len in sorted(prepared, key=lambda x: (x[0], x[1])):
+    for _length, _order, record, segment, prefix_len in sorted(
+        prepared, key=lambda x: (x[0], x[1])
+    ):
         if len(ids) + len(segment) > seq_len:
             continue
         base = len(ids)
@@ -229,7 +233,9 @@ def train_bootstrap(
     if hasattr(kfac_optimizer, "reset_curvature"):
         kfac_optimizer.reset_curvature(active_layers=active_layers, damping=damping)
     if hasattr(kfac_optimizer, "set_hyperparams"):
-        kfac_optimizer.set_hyperparams(eta=eta, damping=damping, trust_region_delta=trust_region_delta)
+        kfac_optimizer.set_hyperparams(
+            eta=eta, damping=damping, trust_region_delta=trust_region_delta
+        )
 
     for level in levels:
         record_cursor = 100_000_000 + level * 10_000_000
@@ -281,7 +287,9 @@ def train_bootstrap(
                         "damping": float(damping),
                         "trust_region_delta": float(trust_region_delta),
                         "kfac_warmup_active": float(local_update < kfac_warmup_updates),
-                        "max_memory_allocated_mb": float(torch.cuda.max_memory_allocated() / (1024**2)),
+                        "max_memory_allocated_mb": float(
+                            torch.cuda.max_memory_allocated() / (1024**2)
+                        ),
                     },
                     "validation": val_metrics,
                 }
@@ -290,7 +298,8 @@ def train_bootstrap(
                 if checkpoint_every_evals > 0 and eval_count % checkpoint_every_evals == 0:
                     export_plastic_checkpoint(
                         model,
-                        Path(output_dir) / f"bootstrap_level_{level}_update_{global_update}.plastic.silex",
+                        Path(output_dir)
+                        / f"bootstrap_level_{level}_update_{global_update}.plastic.silex",
                         kfac_optimizer=kfac_optimizer,
                         include_kfac=include_kfac_in_checkpoints,
                         metadata={
@@ -376,7 +385,9 @@ def train_bootstrap_output_adapter(
                         "latent_gain": float(depth["latent_gain"].detach().cpu()),
                         "step_seconds": float(step_seconds),
                         "updates_per_minute": float(60.0 / max(step_seconds, 1.0e-9)),
-                        "max_memory_allocated_mb": float(torch.cuda.max_memory_allocated() / (1024**2)),
+                        "max_memory_allocated_mb": float(
+                            torch.cuda.max_memory_allocated() / (1024**2)
+                        ),
                     },
                     "validation": val_metrics,
                 }
@@ -385,7 +396,8 @@ def train_bootstrap_output_adapter(
                 if checkpoint_every_evals > 0 and eval_count % checkpoint_every_evals == 0:
                     export_plastic_checkpoint(
                         model,
-                        Path(output_dir) / f"bootstrap_level_{level}_update_{global_update}.plastic.silex",
+                        Path(output_dir)
+                        / f"bootstrap_level_{level}_update_{global_update}.plastic.silex",
                         kfac_optimizer=None,
                         include_kfac=False,
                         metadata={

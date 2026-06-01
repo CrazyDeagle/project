@@ -1,6 +1,7 @@
 import pytest
 import torch
 
+from silexcode.constants import SILEX_T18_6B_R64_CONFIG
 from silexcode.dataset import (
     RNG,
     ast_whitelist_ok,
@@ -9,7 +10,6 @@ from silexcode.dataset import (
     splitmix64_next,
     verify_candidate_code,
 )
-from silexcode.constants import SILEX_T18_6B_R64_CONFIG
 from silexcode.model import SilexCodeT18_6B_R64, sample_token_top_k_top_p
 from silexcode.train import build_sequence_and_mask, compute_depth_losses, stage_ready
 
@@ -61,8 +61,26 @@ def test_depth_losses_and_thresholds_are_strict() -> None:
     mask = torch.ones(511)
     depth = compute_depth_losses(logits, labels, mask)
     assert torch.isfinite(depth["nll"])
-    assert stage_ready(3, {"nll4": 0.180, "mono": 0.0020, "latent_gain": 0.040, "compile_pass": 0.990, "unit_pass": 0.920})
-    assert not stage_ready(3, {"nll4": 0.1801, "mono": 0.0020, "latent_gain": 0.040, "compile_pass": 0.990, "unit_pass": 0.920})
+    assert stage_ready(
+        3,
+        {
+            "nll4": 0.180,
+            "mono": 0.0020,
+            "latent_gain": 0.040,
+            "compile_pass": 0.990,
+            "unit_pass": 0.920,
+        },
+    )
+    assert not stage_ready(
+        3,
+        {
+            "nll4": 0.1801,
+            "mono": 0.0020,
+            "latent_gain": 0.040,
+            "compile_pass": 0.990,
+            "unit_pass": 0.920,
+        },
+    )
 
 
 def test_top_k_top_p_sampler_is_seed_deterministic() -> None:
@@ -72,8 +90,14 @@ def test_top_k_top_p_sampler_is_seed_deterministic() -> None:
     logits[12] = 2.0
     g1 = torch.Generator(device="cpu").manual_seed(123)
     g2 = torch.Generator(device="cpu").manual_seed(123)
-    seq1 = [sample_token_top_k_top_p(logits, temperature=0.7, top_p=0.9, top_k=3, generator=g1) for _ in range(8)]
-    seq2 = [sample_token_top_k_top_p(logits, temperature=0.7, top_p=0.9, top_k=3, generator=g2) for _ in range(8)]
+    seq1 = [
+        sample_token_top_k_top_p(logits, temperature=0.7, top_p=0.9, top_k=3, generator=g1)
+        for _ in range(8)
+    ]
+    seq2 = [
+        sample_token_top_k_top_p(logits, temperature=0.7, top_p=0.9, top_k=3, generator=g2)
+        for _ in range(8)
+    ]
     assert seq1 == seq2
     assert set(seq1) <= {10, 11, 12}
     assert sample_token_top_k_top_p(logits, temperature=0.0, top_p=1.0, top_k=0, generator=g1) == 10
@@ -86,7 +110,16 @@ def test_generate_bytes_uses_forward_native_and_stop_bytes() -> None:
         def __init__(self):
             self.config = SILEX_T18_6B_R64_CONFIG
             self.gamma_out = torch.empty((), device="cpu")
-            self.tokens = [ord("a"), ord("b"), ord("<"), ord("/"), ord("C"), ord(">"), ord("\n"), 65]
+            self.tokens = [
+                ord("a"),
+                ord("b"),
+                ord("<"),
+                ord("/"),
+                ord("C"),
+                ord(">"),
+                ord("\n"),
+                65,
+            ]
             self.calls = 0
 
         def initial_state(self):

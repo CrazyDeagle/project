@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import importlib
-import math
 import os
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import torch
 from torch import nn
@@ -12,14 +11,13 @@ from torch.utils.cpp_extension import load
 
 from .constants import (
     SILEX_T18_6B_R64_CONFIG,
-    TOKEN_EOS,
     TOKEN_BOS,
+    TOKEN_EOS,
     VALID_D_IN,
     VALID_D_OUT,
     SilexConfig,
     s5,
 )
-
 
 _EXT = None
 
@@ -116,7 +114,9 @@ def gated_silu_product(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     return _load_extension().gated_silu_product(a.contiguous(), b.contiguous())
 
 
-def residual_add(base: torch.Tensor, ternary: torch.Tensor, adapter: torch.Tensor, rho: float) -> torch.Tensor:
+def residual_add(
+    base: torch.Tensor, ternary: torch.Tensor, adapter: torch.Tensor, rho: float
+) -> torch.Tensor:
     return _load_extension().residual_add_forward(
         base.contiguous(),
         ternary.contiguous(),
@@ -311,34 +311,70 @@ class TernaryEmbedding(nn.Module):
             raise ValueError("T must be in [1, 8192]")
         if token_ids.max().item() > 257 or token_ids.min().item() < 0:
             raise ValueError("token ids must be in [0, 257]")
-        ids = token_ids.to(device=self.wpack.device, dtype=torch.uint16, non_blocking=True).contiguous()
+        ids = token_ids.to(
+            device=self.wpack.device, dtype=torch.uint16, non_blocking=True
+        ).contiguous()
         return _load_extension().embedding_forward(ids, self.wpack, self.alpha)
 
 
 class SilexLayer(nn.Module):
-    def __init__(self, layer_idx: int, config: SilexConfig, device: torch.device | str, deterministic: bool) -> None:
+    def __init__(
+        self, layer_idx: int, config: SilexConfig, device: torch.device | str, deterministic: bool
+    ) -> None:
         super().__init__()
         d = config.d_model
         d_ff = config.d_ff
         self.config = config
-        self.w_i = TLinear(d, d, layer=layer_idx + 1, matrix_id=0, device=device, deterministic=deterministic)
-        self.w_f = TLinear(d, d, layer=layer_idx + 1, matrix_id=1, device=device, deterministic=deterministic)
-        self.w_v = TLinear(d, d, layer=layer_idx + 1, matrix_id=2, device=device, deterministic=deterministic)
-        self.w_r = TLinear(d, d, layer=layer_idx + 1, matrix_id=3, device=device, deterministic=deterministic)
-        self.w_o = TLinear(d, d, layer=layer_idx + 1, matrix_id=4, device=device, deterministic=deterministic)
-        self.w_a = TLinear(d, d_ff, layer=layer_idx + 1, matrix_id=5, device=device, deterministic=deterministic)
-        self.w_b = TLinear(d, d_ff, layer=layer_idx + 1, matrix_id=6, device=device, deterministic=deterministic)
-        self.w_c = TLinear(d_ff, d, layer=layer_idx + 1, matrix_id=7, device=device, deterministic=deterministic)
+        self.w_i = TLinear(
+            d, d, layer=layer_idx + 1, matrix_id=0, device=device, deterministic=deterministic
+        )
+        self.w_f = TLinear(
+            d, d, layer=layer_idx + 1, matrix_id=1, device=device, deterministic=deterministic
+        )
+        self.w_v = TLinear(
+            d, d, layer=layer_idx + 1, matrix_id=2, device=device, deterministic=deterministic
+        )
+        self.w_r = TLinear(
+            d, d, layer=layer_idx + 1, matrix_id=3, device=device, deterministic=deterministic
+        )
+        self.w_o = TLinear(
+            d, d, layer=layer_idx + 1, matrix_id=4, device=device, deterministic=deterministic
+        )
+        self.w_a = TLinear(
+            d, d_ff, layer=layer_idx + 1, matrix_id=5, device=device, deterministic=deterministic
+        )
+        self.w_b = TLinear(
+            d, d_ff, layer=layer_idx + 1, matrix_id=6, device=device, deterministic=deterministic
+        )
+        self.w_c = TLinear(
+            d_ff, d, layer=layer_idx + 1, matrix_id=7, device=device, deterministic=deterministic
+        )
 
-        self.register_buffer("gamma_m", torch.ones(d, dtype=torch.bfloat16, device=device), persistent=True)
-        self.register_buffer("gamma_f", torch.ones(d, dtype=torch.bfloat16, device=device), persistent=True)
-        self.register_buffer("lambda_raw", torch.zeros(config.recurrent_slots, d, dtype=torch.bfloat16, device=device), persistent=True)
-        self.register_buffer("beta_raw", torch.zeros(config.recurrent_slots, d, dtype=torch.bfloat16, device=device), persistent=True)
+        self.register_buffer(
+            "gamma_m", torch.ones(d, dtype=torch.bfloat16, device=device), persistent=True
+        )
+        self.register_buffer(
+            "gamma_f", torch.ones(d, dtype=torch.bfloat16, device=device), persistent=True
+        )
+        self.register_buffer(
+            "lambda_raw",
+            torch.zeros(config.recurrent_slots, d, dtype=torch.bfloat16, device=device),
+            persistent=True,
+        )
+        self.register_buffer(
+            "beta_raw",
+            torch.zeros(config.recurrent_slots, d, dtype=torch.bfloat16, device=device),
+            persistent=True,
+        )
 
         self.A_m = nn.Parameter(_plastic_a(layer_idx, "m", torch.device(device)))
-        self.B_m = nn.Parameter(torch.zeros(d, config.plastic_rank, dtype=torch.float32, device=device))
+        self.B_m = nn.Parameter(
+            torch.zeros(d, config.plastic_rank, dtype=torch.float32, device=device)
+        )
         self.A_f = nn.Parameter(_plastic_a(layer_idx, "f", torch.device(device)))
-        self.B_f = nn.Parameter(torch.zeros(d, config.plastic_rank, dtype=torch.float32, device=device))
+        self.B_f = nn.Parameter(
+            torch.zeros(d, config.plastic_rank, dtype=torch.float32, device=device)
+        )
 
     def forward(self, x: torch.Tensor, state: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         cfg = self.config
@@ -368,13 +404,40 @@ class SilexLayer(nn.Module):
 
 
 class LatentReasoner(nn.Module):
-    def __init__(self, config: SilexConfig, device: torch.device | str, deterministic: bool) -> None:
+    def __init__(
+        self, config: SilexConfig, device: torch.device | str, deterministic: bool
+    ) -> None:
         super().__init__()
         self.config = config
-        self.w_z1 = TLinear(config.d_model, config.d_z, layer=0, matrix_id=8, device=device, deterministic=deterministic)
-        self.w_z2 = TLinear(config.d_model, config.d_z, layer=0, matrix_id=9, device=device, deterministic=deterministic)
-        self.w_z3 = TLinear(config.d_z, config.d_model, layer=0, matrix_id=10, device=device, deterministic=deterministic)
-        self.register_buffer("gamma_z", torch.ones(config.d_model, dtype=torch.bfloat16, device=device), persistent=True)
+        self.w_z1 = TLinear(
+            config.d_model,
+            config.d_z,
+            layer=0,
+            matrix_id=8,
+            device=device,
+            deterministic=deterministic,
+        )
+        self.w_z2 = TLinear(
+            config.d_model,
+            config.d_z,
+            layer=0,
+            matrix_id=9,
+            device=device,
+            deterministic=deterministic,
+        )
+        self.w_z3 = TLinear(
+            config.d_z,
+            config.d_model,
+            layer=0,
+            matrix_id=10,
+            device=device,
+            deterministic=deterministic,
+        )
+        self.register_buffer(
+            "gamma_z",
+            torch.ones(config.d_model, dtype=torch.bfloat16, device=device),
+            persistent=True,
+        )
 
     def forward(self, z: torch.Tensor, k: int) -> list[torch.Tensor]:
         if k < 0 or k > self.config.k_max:
@@ -414,7 +477,11 @@ class SilexCodeT18_6B_R64(nn.Module):
             [SilexLayer(i, config, device, deterministic) for i in range(config.layers)]
         )
         self.reasoner = LatentReasoner(config, device, deterministic)
-        self.register_buffer("gamma_out", torch.ones(config.d_model, dtype=torch.bfloat16, device=device), persistent=True)
+        self.register_buffer(
+            "gamma_out",
+            torch.ones(config.d_model, dtype=torch.bfloat16, device=device),
+            persistent=True,
+        )
         self.output_adapter_enabled = bool(enable_output_adapter)
         self.output_adapter_rank = int(output_adapter_rank)
         if self.output_adapter_enabled:
@@ -422,7 +489,9 @@ class SilexCodeT18_6B_R64(nn.Module):
                 _output_adapter_down(self.output_adapter_rank, config.d_model, torch.device(device))
             )
             self.output_adapter_up = nn.Parameter(
-                torch.zeros(config.vocab_size, self.output_adapter_rank, dtype=torch.float32, device=device)
+                torch.zeros(
+                    config.vocab_size, self.output_adapter_rank, dtype=torch.float32, device=device
+                )
             )
 
         for p in self.embedding.parameters():
@@ -460,7 +529,9 @@ class SilexCodeT18_6B_R64(nn.Module):
             device=self.gamma_out.device,
         )
 
-    def backbone(self, token_ids: torch.Tensor, state: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+    def backbone(
+        self, token_ids: torch.Tensor, state: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if state is None:
             state = self.initial_state()
         x = self.embedding(token_ids)
@@ -474,10 +545,14 @@ class SilexCodeT18_6B_R64(nn.Module):
         logits = []
         for z in zs:
             o = rms_norm(z, self.gamma_out, self.config.eps_norm)
-            base_logits = _TLinearFn.apply(o.contiguous(), self.embedding.wpack, self.embedding.alpha).float()
+            base_logits = _TLinearFn.apply(
+                o.contiguous(), self.embedding.wpack, self.embedding.alpha
+            ).float()
             if self.output_adapter_enabled:
                 hidden = torch.nn.functional.linear(o.float(), self.output_adapter_down)
-                base_logits = base_logits + torch.nn.functional.linear(hidden, self.output_adapter_up)
+                base_logits = base_logits + torch.nn.functional.linear(
+                    hidden, self.output_adapter_up
+                )
             logits.append(base_logits)
         return logits
 
@@ -493,7 +568,16 @@ class SilexCodeT18_6B_R64(nn.Module):
         A_f = []
         B_f = []
         for layer in self.layers:
-            for proj in (layer.w_i, layer.w_f, layer.w_v, layer.w_r, layer.w_o, layer.w_a, layer.w_b, layer.w_c):
+            for proj in (
+                layer.w_i,
+                layer.w_f,
+                layer.w_v,
+                layer.w_r,
+                layer.w_o,
+                layer.w_a,
+                layer.w_b,
+                layer.w_c,
+            ):
                 layer_wpacks.append(proj.wpack)
                 layer_alphas.append(proj.alpha)
             gamma_m.append(layer.gamma_m)
@@ -529,7 +613,16 @@ class SilexCodeT18_6B_R64(nn.Module):
         self.deterministic_backbone = False
         self.use_native_runtime = True
         for layer in self.layers:
-            for proj in (layer.w_i, layer.w_f, layer.w_v, layer.w_r, layer.w_o, layer.w_a, layer.w_b, layer.w_c):
+            for proj in (
+                layer.w_i,
+                layer.w_f,
+                layer.w_v,
+                layer.w_r,
+                layer.w_o,
+                layer.w_a,
+                layer.w_b,
+                layer.w_c,
+            ):
                 proj.deterministic = False
         self.reasoner.w_z1.deterministic = False
         self.reasoner.w_z2.deterministic = False
@@ -593,18 +686,22 @@ class SilexCodeT18_6B_R64(nn.Module):
             raise ValueError("T must be in [1,8192]")
         if token_ids.min().item() < 0 or token_ids.max().item() >= self.config.vocab_size:
             raise ValueError("token ids must be in [0,257]")
-        ids = token_ids.to(device=self.gamma_out.device, dtype=torch.uint16, non_blocking=True).contiguous()
+        ids = token_ids.to(
+            device=self.gamma_out.device, dtype=torch.uint16, non_blocking=True
+        ).contiguous()
         args = self._native_args()
         if self.output_adapter_enabled:
-            logits, new_state, logits_by_depth = _load_extension().silex_forward_cuda_output_adapter(
-                ids,
-                state.contiguous(),
-                *args,
-                self.output_adapter_down.contiguous(),
-                self.output_adapter_up.contiguous(),
-                int(k),
-                bool(return_all_depths),
-                bool(self.deterministic_backbone),
+            logits, new_state, logits_by_depth = (
+                _load_extension().silex_forward_cuda_output_adapter(
+                    ids,
+                    state.contiguous(),
+                    *args,
+                    self.output_adapter_down.contiguous(),
+                    self.output_adapter_up.contiguous(),
+                    int(k),
+                    bool(return_all_depths),
+                    bool(self.deterministic_backbone),
+                )
             )
         else:
             logits, new_state, logits_by_depth = _load_extension().silex_forward_cuda(
@@ -663,36 +760,58 @@ class SilexCodeT18_6B_R64(nn.Module):
         token_check = token_ids_512.to(dtype=torch.int64)
         if token_check.min().item() < 0 or token_check.max().item() >= self.config.vocab_size:
             raise ValueError("token ids must be in [0,257]")
-        ids = token_ids_512.to(device=self.gamma_out.device, dtype=torch.uint16, non_blocking=True).contiguous()
+        ids = token_ids_512.to(
+            device=self.gamma_out.device, dtype=torch.uint16, non_blocking=True
+        ).contiguous()
 
         if kfac_optimizer is not None:
             if labels is None:
                 labels = token_ids_512[1:].to(device=self.gamma_out.device, dtype=torch.long)
             else:
-                labels = labels.to(device=self.gamma_out.device, dtype=torch.long, non_blocking=True).contiguous()
+                labels = labels.to(
+                    device=self.gamma_out.device, dtype=torch.long, non_blocking=True
+                ).contiguous()
             if labels.dim() != 1 or labels.numel() != self.config.u_train - 1:
                 raise ValueError("labels must have shape [511]")
 
             if loss_mask is None:
-                loss_mask = torch.ones(self.config.u_train - 1, device=self.gamma_out.device, dtype=torch.float32)
+                loss_mask = torch.ones(
+                    self.config.u_train - 1, device=self.gamma_out.device, dtype=torch.float32
+                )
             else:
-                loss_mask = loss_mask.to(device=self.gamma_out.device, dtype=torch.float32, non_blocking=True).contiguous()
+                loss_mask = loss_mask.to(
+                    device=self.gamma_out.device, dtype=torch.float32, non_blocking=True
+                ).contiguous()
             if loss_mask.dim() != 1 or loss_mask.numel() != self.config.u_train - 1:
                 raise ValueError("loss_mask must have shape [511]")
 
             if teacher_logits_final is None:
-                teacher_logits_final = torch.empty(0, device=self.gamma_out.device, dtype=torch.float32)
+                teacher_logits_final = torch.empty(
+                    0, device=self.gamma_out.device, dtype=torch.float32
+                )
             else:
-                teacher_logits_final = teacher_logits_final.to(device=self.gamma_out.device, dtype=torch.float32, non_blocking=True).contiguous()
+                teacher_logits_final = teacher_logits_final.to(
+                    device=self.gamma_out.device, dtype=torch.float32, non_blocking=True
+                ).contiguous()
 
-            kfac_a_covs, kfac_g_covs, kfac_a_invs, kfac_g_invs = self._native_kfac_args(kfac_optimizer)
-            active = list(active_layers if active_layers is not None else sorted(kfac_optimizer.active_layers or range(1, self.config.layers + 1)))
+            kfac_a_covs, kfac_g_covs, kfac_a_invs, kfac_g_invs = self._native_kfac_args(
+                kfac_optimizer
+            )
+            active = list(
+                active_layers
+                if active_layers is not None
+                else sorted(kfac_optimizer.active_layers or range(1, self.config.layers + 1))
+            )
             if self.output_adapter_enabled:
                 output_adapter_down = self.output_adapter_down.contiguous()
                 output_adapter_up = self.output_adapter_up.contiguous()
             else:
-                output_adapter_down = torch.empty(0, device=self.gamma_out.device, dtype=torch.float32)
-                output_adapter_up = torch.empty(0, device=self.gamma_out.device, dtype=torch.float32)
+                output_adapter_down = torch.empty(
+                    0, device=self.gamma_out.device, dtype=torch.float32
+                )
+                output_adapter_up = torch.empty(
+                    0, device=self.gamma_out.device, dtype=torch.float32
+                )
             result = _load_extension().silex_train_chunk_cuda(
                 ids,
                 state.contiguous(),
@@ -714,7 +833,11 @@ class SilexCodeT18_6B_R64(nn.Module):
                 int(stage),
                 float(kfac_optimizer.lr if eta is None else eta),
                 float(kfac_optimizer.damping if damping is None else damping),
-                float(kfac_optimizer.trust_region if trust_region_delta is None else trust_region_delta),
+                float(
+                    kfac_optimizer.trust_region
+                    if trust_region_delta is None
+                    else trust_region_delta
+                ),
                 float(kfac_optimizer.ema),
                 float(kfac_optimizer.weight_decay),
                 float(self.config.eps_opt),
@@ -723,7 +846,7 @@ class SilexCodeT18_6B_R64(nn.Module):
             metrics = {str(k): v for k, v in result.items() if str(k) != "new_state"}
             return metrics, new_state
 
-        logits, new_state, logits_by_depth = _load_extension().silex_train_chunk_cuda(
+        _logits, new_state, logits_by_depth = _load_extension().silex_train_chunk_cuda(
             ids,
             state.contiguous(),
             workspace.contiguous(),
@@ -732,12 +855,19 @@ class SilexCodeT18_6B_R64(nn.Module):
         )
         return torch.stack([x.float() for x in logits_by_depth], dim=0), new_state
 
-    def forward_train(self, input_ids: torch.Tensor, k_train: int = 4, return_logits_by_depth: bool = True):
+    def forward_train(
+        self, input_ids: torch.Tensor, k_train: int = 4, return_logits_by_depth: bool = True
+    ):
         if k_train != self.config.k_train:
             raise ValueError("k_train must be exactly 4")
-        logits, _ = self.forward_python_reference(input_ids, k=k_train, return_all_depths=return_logits_by_depth)
+        logits, _ = self.forward_python_reference(
+            input_ids, k=k_train, return_all_depths=return_logits_by_depth
+        )
         if return_logits_by_depth:
-            return torch.stack([(x[:-1] if x.shape[0] == self.config.u_train else x).float() for x in logits], dim=0)
+            return torch.stack(
+                [(x[:-1] if x.shape[0] == self.config.u_train else x).float() for x in logits],
+                dim=0,
+            )
         return (logits[:-1] if logits.shape[0] == self.config.u_train else logits).float()
 
     def forward(
@@ -749,8 +879,12 @@ class SilexCodeT18_6B_R64(nn.Module):
         return_all_depths: bool = False,
     ):
         if self.use_native_runtime and not torch.is_grad_enabled():
-            return self.forward_native(token_ids, state=state, k=k, return_all_depths=return_all_depths)
-        return self.forward_python_reference(token_ids, state=state, k=k, return_all_depths=return_all_depths)
+            return self.forward_native(
+                token_ids, state=state, k=k, return_all_depths=return_all_depths
+            )
+        return self.forward_python_reference(
+            token_ids, state=state, k=k, return_all_depths=return_all_depths
+        )
 
     @torch.no_grad()
     def generate(self, prompt_ids: list[int], max_new_tokens: int) -> list[int]:
@@ -795,7 +929,9 @@ class SilexCodeT18_6B_R64(nn.Module):
         generator.manual_seed(int(seed) & ((1 << 64) - 1))
 
         prompt = torch.tensor(prompt_ids, dtype=torch.long, device=device)
-        logits, state = self.forward_native(prompt, state=self.initial_state(), k=self.config.k_infer)
+        logits, state = self.forward_native(
+            prompt, state=self.initial_state(), k=self.config.k_infer
+        )
         generated = bytearray()
         token = sample_token_top_k_top_p(
             logits[-1],

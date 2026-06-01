@@ -11,7 +11,11 @@ def main() -> None:
     parser.add_argument("metrics_jsonl")
     args = parser.parse_args()
 
-    rows = [json.loads(line) for line in Path(args.metrics_jsonl).read_text(encoding="ascii").splitlines() if line.strip()]
+    rows = [
+        json.loads(line)
+        for line in Path(args.metrics_jsonl).read_text(encoding="ascii").splitlines()
+        if line.strip()
+    ]
     rows = [row for row in rows if "validation" in row]
     if not rows:
         raise SystemExit("NO_BOOTSTRAP_VALIDATION_ROWS")
@@ -46,7 +50,9 @@ def main() -> None:
         print(f"level_{level}_best_nll4={min(nlls):.6f}")
         print(f"level_{level}_last_token_acc4={accs[-1]:.6f}")
         print(f"level_{level}_max_natural_norm={max(naturals):.6f}")
-    print(f"avg_step_seconds={statistics.fmean(float(row['train'].get('step_seconds', 0.0)) for row in rows):.6f}")
+    print(
+        f"avg_step_seconds={statistics.fmean(float(row['train'].get('step_seconds', 0.0)) for row in rows):.6f}"
+    )
 
 
 if __name__ == "__main__":

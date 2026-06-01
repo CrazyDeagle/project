@@ -24,7 +24,7 @@ class OracleSSDModel:
         if index is None:
             return b"</C>\n"
         record = generate_record(3, index)
-        code = record["C"][len("<C>\n"):]
+        code = record["C"][len("<C>\n") :]
         return code.encode("ascii")[:max_new_bytes]
 
 

@@ -31,13 +31,17 @@ def _write_metrics(path: Path) -> None:
             "validation": {"nll4": 9.0, "mono": 0.02, "latent_gain": 0.03, "token_acc4": 0.2},
         },
     ]
-    path.write_text("\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n", encoding="ascii")
+    path.write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n", encoding="ascii"
+    )
 
 
 def test_analyze_curriculum_metrics_outputs_decision(tmp_path) -> None:
     metrics = tmp_path / "metrics.jsonl"
     _write_metrics(metrics)
-    out = subprocess.check_output([sys.executable, "analyze_curriculum_metrics.py", str(metrics)], text=True)
+    out = subprocess.check_output(
+        [sys.executable, "analyze_curriculum_metrics.py", str(metrics)], text=True
+    )
     assert "stage_1_best_nll4=9.000000" in out
     assert "recommendation=do_not_run_full_threshold_training_yet" in out
 
@@ -49,7 +53,9 @@ def test_compare_runs_selects_best(tmp_path) -> None:
     _write_metrics(b)
     rows = [json.loads(line) for line in b.read_text(encoding="ascii").splitlines()]
     rows[-1]["validation"]["nll4"] = 7.0
-    b.write_text("\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n", encoding="ascii")
+    b.write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n", encoding="ascii"
+    )
     out = subprocess.check_output([sys.executable, "compare_runs.py", str(a), str(b)], text=True)
     assert f"best_run={b}" in out
     assert "best_run_best_nll4=7.000000" in out

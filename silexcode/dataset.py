@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import ast
 import hashlib
-from dataclasses import dataclass
-from typing import Any, Callable
-
+from collections.abc import Callable
+from typing import Any
 
 MASK64 = (1 << 64) - 1
 GLOBAL_SEED = 0x53494C4558434F44
@@ -92,15 +91,60 @@ FAMILY_WEIGHTS = {
 }
 
 ALLOWED_AST_NODES = {
-    "Module", "FunctionDef", "arguments", "arg", "Return", "Assign", "If", "For", "While",
-    "Name", "Load", "Store", "Constant", "BinOp", "UnaryOp", "BoolOp", "Compare", "Call",
-    "Subscript", "Slice", "List", "Mult", "Add", "Sub", "Mod", "BitXor", "BitAnd", "BitOr",
-    "FloorDiv", "USub", "And", "Or", "Not", "Eq", "NotEq", "Lt", "LtE", "Gt", "GtE",
+    "Module",
+    "FunctionDef",
+    "arguments",
+    "arg",
+    "Return",
+    "Assign",
+    "If",
+    "For",
+    "While",
+    "Name",
+    "Load",
+    "Store",
+    "Constant",
+    "BinOp",
+    "UnaryOp",
+    "BoolOp",
+    "Compare",
+    "Call",
+    "Subscript",
+    "Slice",
+    "List",
+    "Mult",
+    "Add",
+    "Sub",
+    "Mod",
+    "BitXor",
+    "BitAnd",
+    "BitOr",
+    "FloorDiv",
+    "USub",
+    "And",
+    "Or",
+    "Not",
+    "Eq",
+    "NotEq",
+    "Lt",
+    "LtE",
+    "Gt",
+    "GtE",
 }
 ALLOWED_CALLS = {"range", "len", "abs", "min", "max"}
 FORBIDDEN_CALLS = {
-    "eval", "exec", "open", "compile", "globals", "locals", "__import__", "getattr",
-    "setattr", "delattr", "input", "print",
+    "eval",
+    "exec",
+    "open",
+    "compile",
+    "globals",
+    "locals",
+    "__import__",
+    "getattr",
+    "setattr",
+    "delattr",
+    "input",
+    "print",
 }
 TRACE_VARS = set("abcijkmnqrtxy")
 
@@ -387,12 +431,28 @@ def make_cases(family_id: int, stage: int, rng: RNG, count: int) -> list[tuple]:
 
 def sample_params(family_id: int, rng: RNG) -> dict[str, int]:
     if family_id == 0:
-        return {"cid": rng.randint(0, 3), "sid_false": rng.randint(0, 7), "sid_true": rng.randint(0, 7), "c1": rng.choice(C1_VALUES)}
+        return {
+            "cid": rng.randint(0, 3),
+            "sid_false": rng.randint(0, 7),
+            "sid_true": rng.randint(0, 7),
+            "c1": rng.choice(C1_VALUES),
+        }
     if family_id == 1:
-        return {"eid": rng.randint(0, 7), "c0": rng.choice(C0_VALUES), "m": rng.choice(M_VALUES), "r": 0}
+        return {
+            "eid": rng.randint(0, 7),
+            "c0": rng.choice(C0_VALUES),
+            "m": rng.choice(M_VALUES),
+            "r": 0,
+        }
     if family_id in (2, 6):
         m = rng.choice(M_VALUES)
-        return {"eid": rng.randint(0, 7), "pid": rng.randint(0, 8), "c0": rng.choice(C0_VALUES), "m": m, "r": rng.randint(0, m - 1)}
+        return {
+            "eid": rng.randint(0, 7),
+            "pid": rng.randint(0, 8),
+            "c0": rng.choice(C0_VALUES),
+            "m": m,
+            "r": rng.randint(0, m - 1),
+        }
     if family_id in (3, 4):
         m = rng.choice(M_VALUES)
         return {"pid": rng.randint(0, 8), "m": m, "r": rng.randint(0, m - 1)}
@@ -477,7 +537,11 @@ def run_reference_interpreter(family_id: int, params: dict[str, int], case: tupl
     if family_id == 0:
         a, b, t = case
         c1 = params["c1"]
-        sid = params["sid_true"] if [a < b, a <= t, a + b < t, a % max(abs(b), 1) == 0][params["cid"]] else params["sid_false"]
+        sid = (
+            params["sid_true"]
+            if [a < b, a <= t, a + b < t, a % max(abs(b), 1) == 0][params["cid"]]
+            else params["sid_false"]
+        )
         return [
             a + b + c1,
             a - b + c1,
@@ -501,7 +565,11 @@ def run_reference_interpreter(family_id: int, params: dict[str, int], case: tupl
     if family_id == 1:
         return [eval_expr_vec(params["eid"], x, i, t, params) for i in range(n)]
     if family_id == 2:
-        return sum(eval_expr_vec(params["eid"], x, i, t, params) for i in range(n) if eval_pred_vec(params["pid"], x, i, t, params))
+        return sum(
+            eval_expr_vec(params["eid"], x, i, t, params)
+            for i in range(n)
+            if eval_pred_vec(params["pid"], x, i, t, params)
+        )
     if family_id == 3:
         return sum(1 for i in range(n) if eval_pred_vec(params["pid"], x, i, t, params))
     if family_id == 4:
@@ -516,7 +584,12 @@ def run_reference_interpreter(family_id: int, params: dict[str, int], case: tupl
         out = 0
         for i in range(n):
             for j in range(i + 1, n):
-                ok = [x[i] < x[j], x[i] + x[j] == t, abs(x[i] - x[j]) <= abs(t), (x[i] + x[j]) % m == r][qid]
+                ok = [
+                    x[i] < x[j],
+                    x[i] + x[j] == t,
+                    abs(x[i] - x[j]) <= abs(t),
+                    (x[i] + x[j]) % m == r,
+                ][qid]
                 out += int(ok)
         return out
     if family_id == 6:
@@ -555,14 +628,22 @@ def formal_sexpr(family_id: int, params: dict[str, int]) -> str:
 
 
 def signature_for_family(family_id: int) -> str:
-    return "f(a:int,b:int,t:int)->int" if family_id == 0 else ("f(n:int,t:int)->int" if family_id == 8 else "f(x:list[int],n:int,t:int)->list[int]|int")
+    return (
+        "f(a:int,b:int,t:int)->int"
+        if family_id == 0
+        else (
+            "f(n:int,t:int)->int" if family_id == 8 else "f(x:list[int],n:int,t:int)->list[int]|int"
+        )
+    )
 
 
 def serialize_params(params: dict[str, int]) -> str:
     return ",".join(f"{k}={params[k]}" for k in sorted(params))
 
 
-def serialize_problem(index: int, family_id: int, params: dict[str, int], public_examples: list[tuple[tuple, Any]]) -> str:
+def serialize_problem(
+    index: int, family_id: int, params: dict[str, int], public_examples: list[tuple[tuple, Any]]
+) -> str:
     lines = [
         "<P>",
         f"I={index & MASK64:016x}",
@@ -582,7 +663,9 @@ def state_line(**kwargs: Any) -> str:
     return ",".join(f"{k}={serialize_value(kwargs[k])}" for k in sorted(kwargs) if k in TRACE_VARS)
 
 
-def trace_reference(family_id: int, params: dict[str, int], case: tuple, trace_max_lines: int) -> list[str]:
+def trace_reference(
+    family_id: int, params: dict[str, int], case: tuple, trace_max_lines: int
+) -> list[str]:
     if trace_max_lines == 0:
         return []
     lines: list[str] = []
@@ -621,7 +704,9 @@ def trace_reference(family_id: int, params: dict[str, int], case: tuple, trace_m
     return lines
 
 
-def serialize_reasoning(family_id: int, params: dict[str, int], first_case: tuple, trace_max_lines: int) -> str:
+def serialize_reasoning(
+    family_id: int, params: dict[str, int], first_case: tuple, trace_max_lines: int
+) -> str:
     lines = ["<R>", f"A={formal_sexpr(family_id, params)}", f"I={serialize_value(first_case)}"]
     lines.extend(trace_reference(family_id, params, first_case, trace_max_lines))
     lines.append("</R>")
@@ -655,10 +740,24 @@ def generate_record(stage: int, index: int) -> dict[str, Any]:
         P = serialize_problem(index, family_id, params, outputs_public)
         R = serialize_reasoning(family_id, params, public_cases[0], {1: 8, 2: 32, 3: 0}[stage])
         C = "<C>\n" + code + "</C>\n"
-        train_text = ("<S1>\n" + R + C) if stage == 1 else (("<S2>\n" + P + C + R) if stage == 2 else ("<S3>\n" + P + C))
+        train_text = (
+            ("<S1>\n" + R + C)
+            if stage == 1
+            else (("<S2>\n" + P + C + R) if stage == 2 else ("<S3>\n" + P + C))
+        )
         token_ids = encode_ascii_record(train_text)
         if len(token_ids) <= 512:
-            return {"stage": stage, "index": index, "family_id": family_id, "params": params, "P": P, "R": R, "C": C, "tests": verify_cases, "token_ids": token_ids}
+            return {
+                "stage": stage,
+                "index": index,
+                "family_id": family_id,
+                "params": params,
+                "P": P,
+                "R": R,
+                "C": C,
+                "tests": verify_cases,
+                "token_ids": token_ids,
+            }
         nonce += 1
 
 
@@ -668,7 +767,11 @@ def sha256_ascii(s: str) -> str:
 
 
 def extract_code_between_C_tags(out_ids: list[int] | bytes) -> str | None:
-    raw = bytes([x for x in out_ids if 0 <= int(x) <= 255]) if not isinstance(out_ids, bytes) else out_ids
+    raw = (
+        bytes([x for x in out_ids if 0 <= int(x) <= 255])
+        if not isinstance(out_ids, bytes)
+        else out_ids
+    )
     text = raw.decode("ascii", errors="ignore")
     start = text.find("<C>\n")
     if start == -1:
@@ -679,10 +782,12 @@ def extract_code_between_C_tags(out_ids: list[int] | bytes) -> str | None:
     end = text.find("</C>\n", start + 4)
     if end == -1:
         return None
-    return text[start + 4:end] + "\n"
+    return text[start + 4 : end] + "\n"
 
 
-def verify_candidate_code(code: str, record: dict, tests_count: int) -> tuple[bool, str | None, str | None]:
+def verify_candidate_code(
+    code: str, record: dict, tests_count: int
+) -> tuple[bool, str | None, str | None]:
     if not code.startswith("def f(") or not code.endswith("\n"):
         return False, None, None
     try:

@@ -1,5 +1,5 @@
-import torch
 import pytest
+import torch
 
 from silexcode.constants import SILEX_T18_6B_R64_CONFIG
 from silexcode.kfac import BlockKFACOptimizer
@@ -94,8 +94,15 @@ def test_native_adapter_backward_matches_pytorch_autograd() -> None:
     assert torch.allclose(grad_x2.float(), x.grad.float(), atol=1e-4, rtol=1e-4)
     assert torch.allclose(grad_A2, A.grad, atol=1e-4, rtol=1e-4)
     assert torch.allclose(grad_B2, B.grad, atol=1e-4, rtol=1e-4)
-    assert torch.allclose(hidden, torch.einsum("td,rd->tr", x.detach().float(), A.detach()), atol=1e-4, rtol=1e-4)
-    assert torch.allclose(grad_hidden, torch.einsum("td,dr->tr", grad_out.to(torch.bfloat16).float(), B.detach()), atol=1e-4, rtol=1e-4)
+    assert torch.allclose(
+        hidden, torch.einsum("td,rd->tr", x.detach().float(), A.detach()), atol=1e-4, rtol=1e-4
+    )
+    assert torch.allclose(
+        grad_hidden,
+        torch.einsum("td,dr->tr", grad_out.to(torch.bfloat16).float(), B.detach()),
+        atol=1e-4,
+        rtol=1e-4,
+    )
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
@@ -105,7 +112,11 @@ def test_native_rmsnorm_and_swiglu_backward_match_autograd() -> None:
     x = torch.randn(2, 4096, device="cuda", dtype=torch.bfloat16, requires_grad=True)
     gamma = torch.randn(4096, device="cuda", dtype=torch.bfloat16)
     grad_y = torch.randn(2, 4096, device="cuda", dtype=torch.float32)
-    y = (x.float() * torch.rsqrt(x.float().square().mean(dim=-1, keepdim=True) + 2.0**-12) * gamma.float())
+    y = (
+        x.float()
+        * torch.rsqrt(x.float().square().mean(dim=-1, keepdim=True) + 2.0**-12)
+        * gamma.float()
+    )
     y.backward(grad_y)
     dx = ext.rms_norm_backward_exact(x.detach(), gamma, grad_y, 2.0**-12)
     assert torch.allclose(dx.float(), x.grad.float(), atol=1e-4, rtol=1e-4)

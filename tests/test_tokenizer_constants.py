@@ -1,4 +1,3 @@
-from silexcode.constants import SILEX_T18_6B_R64_CONFIG, s5
 from silexcode.budget import (
     assert_tdd_invariants,
     logical_ternary_weight_count,
@@ -6,6 +5,7 @@ from silexcode.budget import (
     physical_ternary_pack_bytes,
     plastic_parameter_count,
 )
+from silexcode.constants import SILEX_T18_6B_R64_CONFIG, s5
 from silexcode.tokenizer import ByteLevelTokenizer
 
 

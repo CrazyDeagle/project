@@ -18,7 +18,6 @@ from .dataset import (
     make_cases,
     run_reference_interpreter,
     run_restricted,
-    serialize_value,
     verify_candidate_code,
 )
 from .losses import plastic_mdl
@@ -47,16 +46,40 @@ TOP_P_CYCLE = [0.80, 0.90, 0.95]
 TOP_K = 32
 
 STAGE_CONFIG = {
-    1: {"eta": 0.080, "damping": 1e-3, "delta": 1e-3, "active_layers": list(range(1, 17)), "nll_threshold": 0.080, "mono_threshold": 0.0010, "latent_gain_threshold": 0.010},
-    2: {"eta": 0.060, "damping": 1e-3, "delta": 1e-3, "active_layers": list(range(1, 49)), "nll_threshold": 0.120, "mono_threshold": 0.0015, "latent_gain_threshold": 0.020},
-    3: {"eta": 0.040, "damping": 3e-4, "delta": 5e-4, "active_layers": list(range(1, 65)), "nll_threshold": 0.180, "mono_threshold": 0.0020, "latent_gain_threshold": 0.040},
+    1: {
+        "eta": 0.080,
+        "damping": 1e-3,
+        "delta": 1e-3,
+        "active_layers": list(range(1, 17)),
+        "nll_threshold": 0.080,
+        "mono_threshold": 0.0010,
+        "latent_gain_threshold": 0.010,
+    },
+    2: {
+        "eta": 0.060,
+        "damping": 1e-3,
+        "delta": 1e-3,
+        "active_layers": list(range(1, 49)),
+        "nll_threshold": 0.120,
+        "mono_threshold": 0.0015,
+        "latent_gain_threshold": 0.020,
+    },
+    3: {
+        "eta": 0.040,
+        "damping": 3e-4,
+        "delta": 5e-4,
+        "active_layers": list(range(1, 65)),
+        "nll_threshold": 0.180,
+        "mono_threshold": 0.0020,
+        "latent_gain_threshold": 0.040,
+    },
 }
 
 
 def extract_code_body_with_closing_C(C: str) -> str:
     if not C.startswith("<C>\n") or not C.endswith("</C>\n"):
         raise ValueError("INVALID_C_BLOCK")
-    return C[len("<C>\n"):]
+    return C[len("<C>\n") :]
 
 
 def extract_trace_input_line(R: str) -> str:
@@ -85,7 +108,9 @@ def build_sequence_and_mask(record: dict, stage: int):
         prefix = "<S1>\n" + record["R"] + "<C>\n"
         target = extract_code_body_with_closing_C(record["C"])
     elif stage == 2:
-        prefix = "<S2>\n" + record["P"] + record["C"] + "<R>\n" + extract_trace_input_line(record["R"])
+        prefix = (
+            "<S2>\n" + record["P"] + record["C"] + "<R>\n" + extract_trace_input_line(record["R"])
+        )
         target = extract_trace_lines_with_closing_R(record["R"])
     elif stage == 3:
         prefix = "<S3>\n" + record["P"] + "<C>\n"
@@ -110,20 +135,33 @@ def build_sequence_and_mask(record: dict, stage: int):
 
 def compute_depth_losses(logits_by_k, labels, loss_mask):
     if isinstance(logits_by_k, list):
-        logits_by_k = torch.stack([x[:-1] if x.shape[0] == SEQ_LEN else x for x in logits_by_k], dim=0)
+        logits_by_k = torch.stack(
+            [x[:-1] if x.shape[0] == SEQ_LEN else x for x in logits_by_k], dim=0
+        )
     ce_by_k = [F.cross_entropy(logits_by_k[k].float(), labels, reduction="none") for k in range(5)]
     denom = torch.clamp(loss_mask.sum(), min=1.0)
     nll_by_k = [(ce_by_k[k] * loss_mask).sum() / denom for k in range(5)]
-    omega = torch.tensor([2 * (k + 1) / ((K_TRAIN + 1) * (K_TRAIN + 2)) for k in range(5)], device=logits_by_k.device, dtype=torch.float32)
+    omega = torch.tensor(
+        [2 * (k + 1) / ((K_TRAIN + 1) * (K_TRAIN + 2)) for k in range(5)],
+        device=logits_by_k.device,
+        dtype=torch.float32,
+    )
     nll = sum(omega[k] * nll_by_k[k] for k in range(5))
     mono_acc = sum((torch.relu(ce_by_k[k + 1] - ce_by_k[k]) * loss_mask).sum() for k in range(4))
     mono = mono_acc / (4.0 * denom)
-    return {"nll": nll, "mono": mono, "nll_by_k": nll_by_k, "latent_gain": nll_by_k[0] - nll_by_k[4]}
+    return {
+        "nll": nll,
+        "mono": mono,
+        "nll_by_k": nll_by_k,
+        "latent_gain": nll_by_k[0] - nll_by_k[4],
+    }
 
 
 def compute_kd_loss(logits_by_k, teacher_logits_final, loss_mask):
     if isinstance(logits_by_k, list):
-        logits_by_k = torch.stack([x[:-1] if x.shape[0] == SEQ_LEN else x for x in logits_by_k], dim=0)
+        logits_by_k = torch.stack(
+            [x[:-1] if x.shape[0] == SEQ_LEN else x for x in logits_by_k], dim=0
+        )
     denom = torch.clamp(loss_mask.sum(), min=1.0)
     with torch.no_grad():
         q = torch.softmax(teacher_logits_final.float(), dim=-1)
@@ -137,14 +175,18 @@ def compute_kd_loss(logits_by_k, teacher_logits_final, loss_mask):
 
 def compute_token_diagnostics(logits_by_k, labels, loss_mask) -> dict[str, float]:
     if isinstance(logits_by_k, list):
-        logits_by_k = torch.stack([x[:-1] if x.shape[0] == SEQ_LEN else x for x in logits_by_k], dim=0)
+        logits_by_k = torch.stack(
+            [x[:-1] if x.shape[0] == SEQ_LEN else x for x in logits_by_k], dim=0
+        )
     final_logits = logits_by_k[4].float()
     mask = loss_mask.float()
     denom = torch.clamp(mask.sum(), min=1.0)
     ce = F.cross_entropy(final_logits, labels, reduction="none")
     pred = torch.argmax(final_logits, dim=-1)
     out = {
-        "token_acc4": float(((pred == labels).float() * mask).sum().detach().cpu() / denom.detach().cpu()),
+        "token_acc4": float(
+            ((pred == labels).float() * mask).sum().detach().cpu() / denom.detach().cpu()
+        ),
         "target_tokens": float(mask.sum().detach().cpu()),
     }
 
@@ -159,17 +201,27 @@ def compute_token_diagnostics(logits_by_k, labels, loss_mask) -> dict[str, float
     masked_mean("nll4_newline", labels == 10)
     masked_mean("nll4_space", labels == 32)
     masked_mean("nll4_digit", (labels >= 48) & (labels <= 57))
-    masked_mean("nll4_alpha", ((labels >= 65) & (labels <= 90)) | ((labels >= 97) & (labels <= 122)))
-    masked_mean("nll4_tag_chars", (labels == ord("<")) | (labels == ord(">")) | (labels == ord("/")))
+    masked_mean(
+        "nll4_alpha", ((labels >= 65) & (labels <= 90)) | ((labels >= 97) & (labels <= 122))
+    )
+    masked_mean(
+        "nll4_tag_chars", (labels == ord("<")) | (labels == ord(">")) | (labels == ord("/"))
+    )
     return out
 
 
-def compute_stage_loss(stage: int, logits_by_k, labels, loss_mask, mdl_loss, teacher_logits_final=None):
+def compute_stage_loss(
+    stage: int, logits_by_k, labels, loss_mask, mdl_loss, teacher_logits_final=None
+):
     depth = compute_depth_losses(logits_by_k, labels, loss_mask)
     if stage in (1, 2):
         total = depth["nll"] + 0.10 * depth["mono"] + 1e-6 * mdl_loss
     elif stage == 3:
-        kd = torch.tensor(0.0, device=labels.device) if teacher_logits_final is None else compute_kd_loss(logits_by_k, teacher_logits_final, loss_mask)
+        kd = (
+            torch.tensor(0.0, device=labels.device)
+            if teacher_logits_final is None
+            else compute_kd_loss(logits_by_k, teacher_logits_final, loss_mask)
+        )
         total = depth["nll"] + 0.10 * depth["mono"] + 0.25 * kd + 1e-6 * mdl_loss
         depth["kd"] = kd
     else:
@@ -179,7 +231,11 @@ def compute_stage_loss(stage: int, logits_by_k, labels, loss_mask, mdl_loss, tea
 
 def stage_ready(stage: int, metrics: dict) -> bool:
     cfg = STAGE_CONFIG[stage]
-    if metrics["nll4"] > cfg["nll_threshold"] or metrics["mono"] > cfg["mono_threshold"] or metrics["latent_gain"] < cfg["latent_gain_threshold"]:
+    if (
+        metrics["nll4"] > cfg["nll_threshold"]
+        or metrics["mono"] > cfg["mono_threshold"]
+        or metrics["latent_gain"] < cfg["latent_gain_threshold"]
+    ):
         return False
     if stage == 1:
         return metrics["compile_pass"] >= 0.995
@@ -193,9 +249,13 @@ def stage_ready(stage: int, metrics: dict) -> bool:
 def model_forward_train(model, input_ids_t: torch.Tensor):
     if hasattr(model, "forward_native") and not torch.is_grad_enabled():
         logits, _state = model.forward_native(input_ids_t, k=K_TRAIN, return_all_depths=True)
-        return torch.stack([(x[:-1] if x.shape[0] == SEQ_LEN else x).float() for x in logits], dim=0)
+        return torch.stack(
+            [(x[:-1] if x.shape[0] == SEQ_LEN else x).float() for x in logits], dim=0
+        )
     if hasattr(model, "forward_train"):
-        return model.forward_train(input_ids=input_ids_t, k_train=K_TRAIN, return_logits_by_depth=True)
+        return model.forward_train(
+            input_ids=input_ids_t, k_train=K_TRAIN, return_logits_by_depth=True
+        )
     logits, _ = model.forward_python_reference(input_ids_t, k=K_TRAIN, return_all_depths=True)
     return torch.stack([x[:-1].float() for x in logits], dim=0)
 
@@ -210,7 +270,9 @@ def compile_and_unit_check_generated_code(generated_code: str, record: dict, tes
     rng = RNG(GLOBAL_SEED ^ 0xA11CE ^ int(record["index"]))
     for case in make_cases(record["family_id"], record["stage"], rng, tests_count):
         try:
-            if run_restricted(fn, case) != run_reference_interpreter(record["family_id"], record["params"], case):
+            if run_restricted(fn, case) != run_reference_interpreter(
+                record["family_id"], record["params"], case
+            ):
                 return ok_compile, False
         except Exception:
             return ok_compile, False
@@ -223,7 +285,7 @@ def greedy_generate_text(model, prompt: str, max_new_bytes: int) -> str:
     tok = ByteLevelTokenizer()
     ids = tok.encode_prompt(prompt)
     out_ids = model.generate(ids, max_new_bytes)
-    generated = tok.decode_generated_tokens(out_ids[len(ids):])
+    generated = tok.decode_generated_tokens(out_ids[len(ids) :])
     return generated
 
 
@@ -235,10 +297,14 @@ def greedy_generate_trace_text(model, prompt: str, max_new_bytes: int) -> str:
 
 def variable_exact_counts(generated_trace: str, ref_trace: str):
     num = den = 0
-    for g, r in zip(generated_trace.splitlines(), ref_trace.splitlines()):
+    for g, r in zip(generated_trace.splitlines(), ref_trace.splitlines(), strict=False):
         if "|" not in r:
             continue
-        gs = dict(item.split("=", 1) for item in g.split("|", 1)[1].split(",") if "=" in item) if "|" in g else {}
+        gs = (
+            dict(item.split("=", 1) for item in g.split("|", 1)[1].split(",") if "=" in item)
+            if "|" in g
+            else {}
+        )
         for item in r.split("|", 1)[1].split(","):
             if "=" in item:
                 k, v = item.split("=", 1)
@@ -254,7 +320,14 @@ def line_exact_counts(generated_trace: str, ref_trace: str):
 
 
 @torch.no_grad()
-def evaluate_stage(model, stage: int, validation_indices: list[int], teacher_cache=None, *, generate_outputs: bool = True):
+def evaluate_stage(
+    model,
+    stage: int,
+    validation_indices: list[int],
+    teacher_cache=None,
+    *,
+    generate_outputs: bool = True,
+):
     nll4_sum = mono_sum = gain_sum = 0.0
     compile_pass = unit_pass = count = 0
     var_exact_num = var_exact_den = line_exact_num = line_exact_den = 0
@@ -276,13 +349,33 @@ def evaluate_stage(model, stage: int, validation_indices: list[int], teacher_cac
         mono_sum += float(depth["mono"].detach().cpu())
         gain_sum += float(depth["latent_gain"].detach().cpu())
         count += 1
-        if generate_outputs and stage in (1, 3) and (hasattr(model, "greedy_generate_code") or hasattr(model, "generate")):
-            prompt = ("<S1>\n" + record["R"] + "<C>\n") if stage == 1 else ("<S3>\n" + record["P"] + "<C>\n")
-            ok_c, ok_u = compile_and_unit_check_generated_code(greedy_generate_text(model, prompt, 384), record, 256)
+        if (
+            generate_outputs
+            and stage in (1, 3)
+            and (hasattr(model, "greedy_generate_code") or hasattr(model, "generate"))
+        ):
+            prompt = (
+                ("<S1>\n" + record["R"] + "<C>\n")
+                if stage == 1
+                else ("<S3>\n" + record["P"] + "<C>\n")
+            )
+            ok_c, ok_u = compile_and_unit_check_generated_code(
+                greedy_generate_text(model, prompt, 384), record, 256
+            )
             compile_pass += int(ok_c)
             unit_pass += int(ok_u)
-        if generate_outputs and stage == 2 and (hasattr(model, "greedy_generate_trace") or hasattr(model, "generate")):
-            prompt = "<S2>\n" + record["P"] + record["C"] + "<R>\n" + extract_trace_input_line(record["R"])
+        if (
+            generate_outputs
+            and stage == 2
+            and (hasattr(model, "greedy_generate_trace") or hasattr(model, "generate"))
+        ):
+            prompt = (
+                "<S2>\n"
+                + record["P"]
+                + record["C"]
+                + "<R>\n"
+                + extract_trace_input_line(record["R"])
+            )
             generated = greedy_generate_trace_text(model, prompt, 384)
             ref = extract_trace_lines_with_closing_R(record["R"])
             ve_num, ve_den = variable_exact_counts(generated, ref)
@@ -394,25 +487,57 @@ def build_ssd_pool(
         prompt_ids = encode_ascii_record_without_eos("<S3>\n" + record["P"] + "<C>\n")
         candidates = []
         for c in range(candidates_per_problem):
-            out_ids = model.generate_bytes(prompt_ids=prompt_ids, max_new_bytes=max_code_bytes, temperature=TEMPERATURE_CYCLE[c % 4], top_p=TOP_P_CYCLE[c % 3], top_k=32, seed=GLOBAL_SEED ^ (3 << 56) ^ (pidx << 16) ^ global_step ^ c, stop_bytes=b"</C>\n")
+            out_ids = model.generate_bytes(
+                prompt_ids=prompt_ids,
+                max_new_bytes=max_code_bytes,
+                temperature=TEMPERATURE_CYCLE[c % 4],
+                top_p=TOP_P_CYCLE[c % 3],
+                top_k=32,
+                seed=GLOBAL_SEED ^ (3 << 56) ^ (pidx << 16) ^ global_step ^ c,
+                stop_bytes=b"</C>\n",
+            )
             code = extract_code_between_C_tags(out_ids)
             if code is None:
                 continue
             ok, signature, canonical_ast = verify_candidate_code(code, record, tests_count)
             if ok:
-                candidates.append({"code": code, "signature": signature, "canonical_ast": canonical_ast, "length": len(code.encode("ascii"))})
+                candidates.append(
+                    {
+                        "code": code,
+                        "signature": signature,
+                        "canonical_ast": canonical_ast,
+                        "length": len(code.encode("ascii")),
+                    }
+                )
         groups: dict[str, list[dict[str, Any]]] = {}
         for item in candidates:
             groups.setdefault(item["signature"], []).append(item)
         selected = []
         for signature in sorted(groups):
             if len(groups[signature]) >= consensus_min:
-                selected.append(sorted(groups[signature], key=lambda z: (z["length"], z["canonical_ast"], z["code"]))[0])
+                selected.append(
+                    sorted(
+                        groups[signature],
+                        key=lambda z: (z["length"], z["canonical_ast"], z["code"]),
+                    )[0]
+                )
         for item in selected[:max_accepted_per_problem]:
             C = "<C>\n" + item["code"] + "</C>\n"
             ids = encode_ascii_record("<S3>\n" + record["P"] + C)
             if len(ids) <= 512:
-                accepted.append({"stage": 3, "P": record["P"], "R": record["R"], "C": C, "token_ids": ids, "source": "SSD_F", "index": record["index"], "family_id": record["family_id"], "params": record["params"]})
+                accepted.append(
+                    {
+                        "stage": 3,
+                        "P": record["P"],
+                        "R": record["R"],
+                        "C": C,
+                        "token_ids": ids,
+                        "source": "SSD_F",
+                        "index": record["index"],
+                        "family_id": record["family_id"],
+                        "params": record["params"],
+                    }
+                )
     return accepted
 
 
@@ -438,34 +563,62 @@ def train_curriculum(
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     val_size = VAL_SIZE_PER_STAGE if val_size_override is None else int(val_size_override)
-    eval_every = EVAL_EVERY_UPDATES if eval_every_updates_override is None else int(eval_every_updates_override)
-    max_updates = MAX_UPDATES if max_updates_override is None else {stage: int(max_updates_override.get(stage, MAX_UPDATES[stage])) for stage in (1, 2, 3)}
-    use_ssd_stage3 = (enable_ssd if enable_ssd is not None else require_thresholds)
-    validation_indices = {1: [10_000_000 + i for i in range(val_size)], 2: [20_000_000 + i for i in range(val_size)], 3: [30_000_000 + i for i in range(val_size)]}
+    eval_every = (
+        EVAL_EVERY_UPDATES
+        if eval_every_updates_override is None
+        else int(eval_every_updates_override)
+    )
+    max_updates = (
+        MAX_UPDATES
+        if max_updates_override is None
+        else {
+            stage: int(max_updates_override.get(stage, MAX_UPDATES[stage])) for stage in (1, 2, 3)
+        }
+    )
+    use_ssd_stage3 = enable_ssd if enable_ssd is not None else require_thresholds
+    validation_indices = {
+        1: [10_000_000 + i for i in range(val_size)],
+        2: [20_000_000 + i for i in range(val_size)],
+        3: [30_000_000 + i for i in range(val_size)],
+    }
     global_update = 0
     ssd_pool = []
     teacher_cache = None
     for stage in [1, 2, 3]:
         cfg = STAGE_CONFIG[stage]
         if hasattr(kfac_optimizer, "reset_curvature"):
-            kfac_optimizer.reset_curvature(active_layers=cfg["active_layers"], damping=cfg["damping"])
+            kfac_optimizer.reset_curvature(
+                active_layers=cfg["active_layers"], damping=cfg["damping"]
+            )
         if hasattr(kfac_optimizer, "set_hyperparams"):
-            kfac_optimizer.set_hyperparams(eta=cfg["eta"], damping=cfg["damping"], trust_region_delta=cfg["delta"])
+            kfac_optimizer.set_hyperparams(
+                eta=cfg["eta"], damping=cfg["damping"], trust_region_delta=cfg["delta"]
+            )
         consecutive_ready = 0
         if stage == 3:
             teacher_cache_path = str(Path(output_dir) / "teacher_stage3_logits")
             precompute_stage3_teacher_cache(model, validation_indices[3], teacher_cache_path)
             teacher_cache = open_teacher_cache_reader(teacher_cache_path)
             if use_ssd_stage3:
-                ssd_pool = build_ssd_pool(model, [40_000_000 + i for i in range(SSD_PROBLEMS_PER_REFRESH)], global_update)
+                ssd_pool = build_ssd_pool(
+                    model, [40_000_000 + i for i in range(SSD_PROBLEMS_PER_REFRESH)], global_update
+                )
             else:
                 ssd_pool = []
         for local_update in range(max_updates[stage]):
             train_index = stage * 1_000_000_000 + local_update
-            use_ssd = stage == 3 and len(ssd_pool) > 0 and RNG(GLOBAL_SEED ^ global_update ^ 0x55D15A11).randint(0, 99) < 30
-            record = ssd_pool[global_update % len(ssd_pool)] if use_ssd else generate_record(stage, train_index)
+            use_ssd = (
+                stage == 3
+                and len(ssd_pool) > 0
+                and RNG(GLOBAL_SEED ^ global_update ^ 0x55D15A11).randint(0, 99) < 30
+            )
+            record = (
+                ssd_pool[global_update % len(ssd_pool)]
+                if use_ssd
+                else generate_record(stage, train_index)
+            )
             input_ids, labels, loss_mask = build_sequence_and_mask(record, stage)
-            chunk_ids = input_ids + [labels[-1]]
+            chunk_ids = [*input_ids, labels[-1]]
             input_ids_t = torch.tensor(input_ids, device="cuda", dtype=torch.long)
             labels_t = torch.tensor(labels, device="cuda", dtype=torch.long)
             mask_t = torch.tensor(loss_mask, device="cuda", dtype=torch.float32)
@@ -491,22 +644,57 @@ def train_curriculum(
             else:
                 logits_by_k = model_forward_train(model, input_ids_t)
                 mdl_loss = plastic_mdl((p for _, p in plastic_named_parameters(model)))
-                loss, _depth = compute_stage_loss(stage, logits_by_k, labels_t, mask_t, mdl_loss, teacher_logits)
+                loss, _depth = compute_stage_loss(
+                    stage, logits_by_k, labels_t, mask_t, mdl_loss, teacher_logits
+                )
                 if hasattr(kfac_optimizer, "zero_grad"):
                     kfac_optimizer.zero_grad()
                 loss.backward()
-                kfac_optimizer.step(active_layers=cfg["active_layers"], eta=cfg["eta"], damping=cfg["damping"], trust_region_delta=cfg["delta"])
+                kfac_optimizer.step(
+                    active_layers=cfg["active_layers"],
+                    eta=cfg["eta"],
+                    damping=cfg["damping"],
+                    trust_region_delta=cfg["delta"],
+                )
             global_update += 1
             if use_ssd_stage3 and stage == 3 and global_update % SSD_REFRESH_UPDATES == 0:
-                ssd_pool = build_ssd_pool(model, [50_000_000 + global_update + i for i in range(SSD_PROBLEMS_PER_REFRESH)], global_update)
+                ssd_pool = build_ssd_pool(
+                    model,
+                    [50_000_000 + global_update + i for i in range(SSD_PROBLEMS_PER_REFRESH)],
+                    global_update,
+                )
             if local_update % eval_every == 0:
-                metrics = evaluate_stage(model, stage, validation_indices[stage], teacher_cache, generate_outputs=require_thresholds)
-                consecutive_ready = consecutive_ready + 1 if (not require_thresholds or stage_ready(stage, metrics)) else 0
-                save_metrics_jsonl(output_dir, stage=stage, global_update=global_update, local_update=local_update, metrics=metrics, consecutive_ready=consecutive_ready)
+                metrics = evaluate_stage(
+                    model,
+                    stage,
+                    validation_indices[stage],
+                    teacher_cache,
+                    generate_outputs=require_thresholds,
+                )
+                consecutive_ready = (
+                    consecutive_ready + 1
+                    if (not require_thresholds or stage_ready(stage, metrics))
+                    else 0
+                )
+                save_metrics_jsonl(
+                    output_dir,
+                    stage=stage,
+                    global_update=global_update,
+                    local_update=local_update,
+                    metrics=metrics,
+                    consecutive_ready=consecutive_ready,
+                )
                 if consecutive_ready >= ADVANCE_CONSECUTIVE_EVALS:
                     break
         if consecutive_ready < ADVANCE_CONSECUTIVE_EVALS:
             if require_thresholds:
                 raise RuntimeError(f"CURRICULUM_STAGE_{stage}_FAILED_THRESHOLDS")
-            save_metrics_jsonl(output_dir, stage=stage, global_update=global_update, local_update=max_updates[stage], metrics={"dry_run_complete": True}, consecutive_ready=consecutive_ready)
+            save_metrics_jsonl(
+                output_dir,
+                stage=stage,
+                global_update=global_update,
+                local_update=max_updates[stage],
+                metrics={"dry_run_complete": True},
+                consecutive_ready=consecutive_ready,
+            )
     return model

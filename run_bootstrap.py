@@ -49,7 +49,12 @@ def main() -> None:
     )
     optimizer = None
     if not args.enable_output_adapter:
-        optimizer = BlockKFACOptimizer(plastic_named_parameters(model), lr=args.eta, damping=args.damping, trust_region=args.trust_region_delta)
+        optimizer = BlockKFACOptimizer(
+            plastic_named_parameters(model),
+            lr=args.eta,
+            damping=args.damping,
+            trust_region=args.trust_region_delta,
+        )
     if args.resume:
         import_plastic_checkpoint(model, args.resume, kfac_optimizer=optimizer)
     if args.enable_output_adapter:
@@ -58,7 +63,9 @@ def main() -> None:
         output_params = model.output_adapter_parameters()
         if not output_params:
             raise RuntimeError("output adapter parameters were not initialized")
-        optimizer = torch.optim.AdamW(output_params, lr=args.output_adapter_lr, betas=(0.9, 0.95), weight_decay=0.0)
+        optimizer = torch.optim.AdamW(
+            output_params, lr=args.output_adapter_lr, betas=(0.9, 0.95), weight_decay=0.0
+        )
 
     levels = tuple(int(x) for x in args.levels.split(",") if x.strip())
     updates_per_level = 1 if args.dry_run else args.updates_per_level

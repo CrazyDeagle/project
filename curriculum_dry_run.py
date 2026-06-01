@@ -22,7 +22,9 @@ def main() -> None:
     if out.exists():
         shutil.rmtree(out)
     model = SilexCodeT18_6B_R64(device="cuda")
-    optimizer = BlockKFACOptimizer(plastic_named_parameters(model), lr=0.04, damping=3e-4, trust_region=5e-4)
+    optimizer = BlockKFACOptimizer(
+        plastic_named_parameters(model), lr=0.04, damping=3e-4, trust_region=5e-4
+    )
     train_curriculum(
         model,
         optimizer,

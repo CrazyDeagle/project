@@ -40,12 +40,16 @@ def test_fast_deterministic_tlinear_matches_packed_kernel() -> None:
         wpack, alpha = ext.deterministic_pack_ternary_cuda(d_out, d_in, layer, matrix_id)
         x = torch.randn(2, d_in, device="cuda", dtype=torch.bfloat16)
         packed_y = ext.tlinear_forward(x, wpack, alpha)
-        fast_y = ext.deterministic_tlinear_forward(x.contiguous(), alpha.contiguous(), d_in, d_out, layer, matrix_id)
+        fast_y = ext.deterministic_tlinear_forward(
+            x.contiguous(), alpha.contiguous(), d_in, d_out, layer, matrix_id
+        )
         assert torch.allclose(fast_y.float(), packed_y.float(), atol=0.02, rtol=0.02)
 
         dy = torch.randn(2, d_out, device="cuda", dtype=torch.bfloat16)
         packed_dx = ext.tlinear_backward_input(dy, wpack, alpha, d_in)
-        fast_dx = ext.deterministic_tlinear_backward_input(dy.contiguous(), alpha.contiguous(), d_in, d_out, layer, matrix_id)
+        fast_dx = ext.deterministic_tlinear_backward_input(
+            dy.contiguous(), alpha.contiguous(), d_in, d_out, layer, matrix_id
+        )
         assert torch.allclose(fast_dx, packed_dx, atol=1e-4, rtol=1e-4)
 
 
@@ -64,7 +68,9 @@ def test_recurrent_mixer_forward_matches_reference() -> None:
     lambda_raw = torch.randn(r, d, device="cuda", dtype=torch.bfloat16)
     beta_raw = torch.randn(r, d, device="cuda", dtype=torch.bfloat16)
 
-    g, new_state = ext.recurrent_mixer_forward(i_gate, f_gate, v_val, r_gate, state, lambda_raw, beta_raw)
+    g, new_state = ext.recurrent_mixer_forward(
+        i_gate, f_gate, v_val, r_gate, state, lambda_raw, beta_raw
+    )
 
     lam = torch.sigmoid(lambda_raw.float())
     beta = torch.softmax(beta_raw.float(), dim=0)
@@ -89,7 +95,11 @@ def test_elementwise_cuda_kernels_match_reference() -> None:
     x = torch.randn(2, 4096, device="cuda", dtype=torch.bfloat16)
     gamma = torch.randn(4096, device="cuda", dtype=torch.bfloat16)
     y = ext.rms_norm_forward(x, gamma, 2.0**-12)
-    ref_y = (x.float() * torch.rsqrt(x.float().square().mean(dim=-1, keepdim=True) + 2.0**-12) * gamma.float()).to(torch.bfloat16)
+    ref_y = (
+        x.float()
+        * torch.rsqrt(x.float().square().mean(dim=-1, keepdim=True) + 2.0**-12)
+        * gamma.float()
+    ).to(torch.bfloat16)
     assert torch.allclose(y.float(), ref_y.float(), atol=0.02, rtol=0.02)
 
     sig = ext.activation_forward(x, 0)

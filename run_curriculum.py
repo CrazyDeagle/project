@@ -31,7 +31,9 @@ def main() -> None:
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     model = SilexCodeT18_6B_R64(device="cuda")
-    optimizer = BlockKFACOptimizer(plastic_named_parameters(model), lr=0.04, damping=3e-4, trust_region=5e-4)
+    optimizer = BlockKFACOptimizer(
+        plastic_named_parameters(model), lr=0.04, damping=3e-4, trust_region=5e-4
+    )
     if args.resume:
         import_silex_checkpoint(model, args.resume, kfac_optimizer=optimizer)
 

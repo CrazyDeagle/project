@@ -81,7 +81,9 @@ class BlockKFACOptimizer:
         return layer in self.active_layers
 
     @torch.no_grad()
-    def reset_curvature(self, *, active_layers: list[int] | None = None, damping: float | None = None) -> None:
+    def reset_curvature(
+        self, *, active_layers: list[int] | None = None, damping: float | None = None
+    ) -> None:
         if damping is not None:
             self.damping = float(damping)
         self.active_layers = set(active_layers) if active_layers is not None else None
@@ -156,7 +158,9 @@ class BlockKFACOptimizer:
             for c in range(o // q):
                 left = st.g_inv[c]
                 for b in range(i // q):
-                    d_blocks[c, b] = torch.einsum("xy,yz,zw->xw", left, grad_blocks[c, b], st.a_inv[b])
+                    d_blocks[c, b] = torch.einsum(
+                        "xy,yz,zw->xw", left, grad_blocks[c, b], st.a_inv[b]
+                    )
             nat = d_blocks.permute(0, 2, 1, 3).contiguous().reshape_as(p)
             nu = nu + (grad * nat).sum()
             updates.append((p, nat))
@@ -164,7 +168,10 @@ class BlockKFACOptimizer:
         nu = torch.clamp(nu, min=0.0)
         chi = torch.minimum(
             torch.ones_like(nu),
-            torch.sqrt(torch.tensor(self.trust_region, dtype=torch.float32, device=nu.device) / (nu + self.config.eps_opt)),
+            torch.sqrt(
+                torch.tensor(self.trust_region, dtype=torch.float32, device=nu.device)
+                / (nu + self.config.eps_opt)
+            ),
         )
         for p, nat in updates:
             p.add_(nat, alpha=-self.lr * float(chi.item()))

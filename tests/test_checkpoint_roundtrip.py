@@ -10,7 +10,10 @@ from silexcode.model import SilexCodeT18_6B_R64
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
-@pytest.mark.skipif(os.environ.get("SILEX_RUN_FULL_CHECKPOINT_TEST") != "1", reason="full checkpoint roundtrip is opt-in")
+@pytest.mark.skipif(
+    os.environ.get("SILEX_RUN_FULL_CHECKPOINT_TEST") != "1",
+    reason="full checkpoint roundtrip is opt-in",
+)
 def test_full_silex_checkpoint_roundtrip(tmp_path) -> None:
     path = tmp_path / "roundtrip.silex"
     model = SilexCodeT18_6B_R64(device="cuda")

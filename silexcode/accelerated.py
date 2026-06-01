@@ -8,7 +8,13 @@ from pathlib import Path
 import torch
 
 from .checkpoint import export_plastic_checkpoint
-from .dataset import GLOBAL_SEED, RNG, encode_ascii_record, encode_ascii_record_without_eos, generate_record
+from .dataset import (
+    GLOBAL_SEED,
+    RNG,
+    encode_ascii_record,
+    encode_ascii_record_without_eos,
+    generate_record,
+)
 from .train import (
     ADVANCE_CONSECUTIVE_EVALS,
     EVAL_EVERY_UPDATES,
@@ -17,8 +23,8 @@ from .train import (
     SEQ_LEN,
     STAGE_CONFIG,
     VAL_SIZE_PER_STAGE,
-    compute_depth_losses,
     build_ssd_pool,
+    compute_depth_losses,
     evaluate_stage,
     extract_code_body_with_closing_C,
     extract_trace_input_line,
@@ -96,7 +102,10 @@ def build_packed_sequence_and_mask(
     elif packing == "random-fit":
         ordered = sorted(
             prepared,
-            key=lambda x: ((GLOBAL_SEED ^ (int(x[1]["index"]) * 0x9E3779B97F4A7C15)) & ((1 << 64) - 1), x[4]),
+            key=lambda x: (
+                (GLOBAL_SEED ^ (int(x[1]["index"]) * 0x9E3779B97F4A7C15)) & ((1 << 64) - 1),
+                x[4],
+            ),
         )
     else:
         raise ValueError("packing must be one of: shortest, balanced, random-fit")
@@ -193,12 +202,22 @@ def train_accelerated_curriculum(
     torch.backends.cudnn.allow_tf32 = False
 
     val_size = VAL_SIZE_PER_STAGE if val_size_override is None else int(val_size_override)
-    eval_every = EVAL_EVERY_UPDATES if eval_every_updates_override is None else int(eval_every_updates_override)
-    max_updates = MAX_UPDATES if max_updates_override is None else {
-        stage: int(max_updates_override.get(stage, MAX_UPDATES[stage])) for stage in (1, 2, 3)
-    }
+    eval_every = (
+        EVAL_EVERY_UPDATES
+        if eval_every_updates_override is None
+        else int(eval_every_updates_override)
+    )
+    max_updates = (
+        MAX_UPDATES
+        if max_updates_override is None
+        else {
+            stage: int(max_updates_override.get(stage, MAX_UPDATES[stage])) for stage in (1, 2, 3)
+        }
+    )
     use_ssd_stage3 = enable_ssd if enable_ssd is not None else require_thresholds
-    do_generate_eval = require_thresholds if generate_eval_outputs is None else bool(generate_eval_outputs)
+    do_generate_eval = (
+        require_thresholds if generate_eval_outputs is None else bool(generate_eval_outputs)
+    )
     validation_indices = {
         1: [10_000_000 + i for i in range(val_size)],
         2: [20_000_000 + i for i in range(val_size)],
@@ -216,9 +235,13 @@ def train_accelerated_curriculum(
         stage_damping = float(cfg["damping"]) * float(damping_scale)
         stage_delta = float(cfg["delta"]) * float(trust_scale)
         if hasattr(kfac_optimizer, "reset_curvature"):
-            kfac_optimizer.reset_curvature(active_layers=cfg["active_layers"], damping=stage_damping)
+            kfac_optimizer.reset_curvature(
+                active_layers=cfg["active_layers"], damping=stage_damping
+            )
         if hasattr(kfac_optimizer, "set_hyperparams"):
-            kfac_optimizer.set_hyperparams(eta=stage_eta, damping=stage_damping, trust_region_delta=stage_delta)
+            kfac_optimizer.set_hyperparams(
+                eta=stage_eta, damping=stage_damping, trust_region_delta=stage_delta
+            )
 
         consecutive_ready = 0
         record_cursor = stage * 1_000_000_000
@@ -229,7 +252,9 @@ def train_accelerated_curriculum(
             precompute_stage3_teacher_cache(model, validation_indices[3], teacher_cache_path)
             teacher_cache = open_teacher_cache_reader(teacher_cache_path)
             if use_ssd_stage3:
-                ssd_pool = build_ssd_pool(model, [40_000_000 + i for i in range(256)], global_update)
+                ssd_pool = build_ssd_pool(
+                    model, [40_000_000 + i for i in range(256)], global_update
+                )
 
         for local_update in range(max_updates[stage]):
             use_ssd = False
@@ -238,7 +263,10 @@ def train_accelerated_curriculum(
 
             if use_ssd:
                 base = global_update % len(ssd_pool)
-                records = [ssd_pool[(base + i) % len(ssd_pool)] for i in range(min(max_records_per_chunk, len(ssd_pool)))]
+                records = [
+                    ssd_pool[(base + i) % len(ssd_pool)]
+                    for i in range(min(max_records_per_chunk, len(ssd_pool)))
+                ]
                 chunk = build_packed_sequence_and_mask(
                     records,
                     stage,
@@ -309,7 +337,9 @@ def train_accelerated_curriculum(
                             "damping": float(stage_damping),
                             "trust_region_delta": float(stage_delta),
                             "kfac_warmup_active": float(local_update < int(kfac_warmup_updates)),
-                            "max_memory_allocated_mb": float(torch.cuda.max_memory_allocated() / (1024**2)),
+                            "max_memory_allocated_mb": float(
+                                torch.cuda.max_memory_allocated() / (1024**2)
+                            ),
                         },
                         "validation": val_metrics,
                         "packed_records": len(chunk.record_indices),
@@ -392,10 +422,18 @@ def train_output_adapter_curriculum(
     torch.backends.cudnn.allow_tf32 = False
 
     val_size = VAL_SIZE_PER_STAGE if val_size_override is None else int(val_size_override)
-    eval_every = EVAL_EVERY_UPDATES if eval_every_updates_override is None else int(eval_every_updates_override)
-    max_updates = MAX_UPDATES if max_updates_override is None else {
-        stage: int(max_updates_override.get(stage, MAX_UPDATES[stage])) for stage in (1, 2, 3)
-    }
+    eval_every = (
+        EVAL_EVERY_UPDATES
+        if eval_every_updates_override is None
+        else int(eval_every_updates_override)
+    )
+    max_updates = (
+        MAX_UPDATES
+        if max_updates_override is None
+        else {
+            stage: int(max_updates_override.get(stage, MAX_UPDATES[stage])) for stage in (1, 2, 3)
+        }
+    )
     validation_indices = {
         1: [10_000_000 + i for i in range(val_size)],
         2: [20_000_000 + i for i in range(val_size)],
@@ -423,7 +461,9 @@ def train_output_adapter_curriculum(
 
             step_start = time.perf_counter()
             optimizer.zero_grad(set_to_none=True)
-            logits_by_k = model.forward_train(input_ids=input_ids_t, k_train=K_TRAIN, return_logits_by_depth=True)
+            logits_by_k = model.forward_train(
+                input_ids=input_ids_t, k_train=K_TRAIN, return_logits_by_depth=True
+            )
             depth = compute_depth_losses(logits_by_k, labels_t, mask_t)
             loss = depth["nll"] + 0.10 * depth["mono"]
             loss.backward()
@@ -455,7 +495,9 @@ def train_output_adapter_curriculum(
                             "latent_gain": float(depth["latent_gain"].detach().cpu()),
                             "step_seconds": float(step_seconds),
                             "updates_per_minute": float(60.0 / max(step_seconds, 1.0e-9)),
-                            "max_memory_allocated_mb": float(torch.cuda.max_memory_allocated() / (1024**2)),
+                            "max_memory_allocated_mb": float(
+                                torch.cuda.max_memory_allocated() / (1024**2)
+                            ),
                         },
                         "validation": val_metrics,
                         "packed_records": len(chunk.record_indices),
@@ -488,6 +530,10 @@ def train_output_adapter_curriculum(
     export_plastic_checkpoint(
         model,
         Path(output_dir) / "output_adapter_latest.plastic.silex",
-        metadata={"global_update": global_update, "stages": list(stages), "optimizer": "output_adapter_adamw"},
+        metadata={
+            "global_update": global_update,
+            "stages": list(stages),
+            "optimizer": "output_adapter_adamw",
+        },
     )
     return model

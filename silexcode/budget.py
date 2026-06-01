@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from .constants import SILEX_T18_6B_R64_CONFIG, SilexConfig, s5
 
-
 MIB = 2**20
 
 

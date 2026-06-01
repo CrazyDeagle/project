@@ -23,7 +23,9 @@ def main() -> None:
     parser.add_argument("--max-records-per-chunk", type=int, default=8)
     parser.add_argument("--candidate-multiplier", type=int, default=4)
     parser.add_argument("--include-padding-loss", action="store_true")
-    parser.add_argument("--packing", choices=["shortest", "balanced", "random-fit"], default="shortest")
+    parser.add_argument(
+        "--packing", choices=["shortest", "balanced", "random-fit"], default="shortest"
+    )
     parser.add_argument("--kfac-warmup-updates", type=int, default=0)
     parser.add_argument("--eta-scale", type=float, default=1.0)
     parser.add_argument("--damping-scale", type=float, default=1.0)
@@ -70,7 +72,12 @@ def main() -> None:
             import_silex_checkpoint(model, args.resume, kfac_optimizer=optimizer)
     if args.output_adapter_only:
         model.freeze_internal_plastic_adapters()
-        optimizer = torch.optim.AdamW(model.output_adapter_parameters(), lr=args.output_adapter_lr, betas=(0.9, 0.95), weight_decay=0.0)
+        optimizer = torch.optim.AdamW(
+            model.output_adapter_parameters(),
+            lr=args.output_adapter_lr,
+            betas=(0.9, 0.95),
+            weight_decay=0.0,
+        )
 
     if args.dry_run:
         max_updates = {1: 1, 2: 1, 3: 1}
@@ -78,7 +85,11 @@ def main() -> None:
         val_size = 1
         require_thresholds = False
     else:
-        max_updates = None if args.max_updates is None else {1: args.max_updates, 2: args.max_updates, 3: args.max_updates}
+        max_updates = (
+            None
+            if args.max_updates is None
+            else {1: args.max_updates, 2: args.max_updates, 3: args.max_updates}
+        )
         eval_every = args.eval_every
         val_size = args.val_size
         require_thresholds = args.require_thresholds

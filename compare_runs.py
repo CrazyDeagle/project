@@ -23,9 +23,17 @@ def summarize(path: Path) -> dict[str, float | str]:
         raise ValueError(f"NO_VALIDATION_ROWS:{path}")
     nlls = [float(row["validation"]["nll4"]) for row in rows]
     updates = [int(row.get("global_update", 0)) for row in rows]
-    naturals = [float(row.get("train", {}).get("natural_norm", 0.0)) for row in rows if "natural_norm" in row.get("train", {})]
+    naturals = [
+        float(row.get("train", {}).get("natural_norm", 0.0))
+        for row in rows
+        if "natural_norm" in row.get("train", {})
+    ]
     targets = [float(row.get("target_tokens", 0.0)) for row in rows if "target_tokens" in row]
-    steps = [float(row.get("train", {}).get("step_seconds", 0.0)) for row in rows if "step_seconds" in row.get("train", {})]
+    steps = [
+        float(row.get("train", {}).get("step_seconds", 0.0))
+        for row in rows
+        if "step_seconds" in row.get("train", {})
+    ]
     span = max(1, updates[-1] - updates[0])
     return {
         "path": str(path),
@@ -61,7 +69,9 @@ def main() -> None:
     ]
     print(",".join(keys))
     for row in summaries:
-        print(",".join(str(row[key]) if key == "path" else f"{float(row[key]):.6f}" for key in keys))
+        print(
+            ",".join(str(row[key]) if key == "path" else f"{float(row[key]):.6f}" for key in keys)
+        )
 
     best = min(summaries, key=lambda row: float(row["best_nll4"]))
     print()

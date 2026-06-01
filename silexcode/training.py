@@ -36,8 +36,14 @@ def train_chunk(
 
     model.train()
     optimizer.zero_grad()
-    logits_by_depth, _ = model(token_ids_512, state=model.initial_state(), k=config.k_train, return_all_depths=True)
-    parts = silex_latent_loss(logits_by_depth, token_ids_512, (p for _, p in plastic_named_parameters(model)), config)
+    logits_by_depth, _ = model(
+        token_ids_512, state=model.initial_state(), k=config.k_train, return_all_depths=True
+    )
+    parts = silex_latent_loss(
+        logits_by_depth, token_ids_512, (p for _, p in plastic_named_parameters(model)), config
+    )
     parts["loss"].backward()
     nu = optimizer.step()
-    return {name: float(value.detach().item()) for name, value in parts.items()} | {"natural_norm": nu}
+    return {name: float(value.detach().item()) for name, value in parts.items()} | {
+        "natural_norm": nu
+    }

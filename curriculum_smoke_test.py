@@ -30,7 +30,9 @@ def main() -> None:
     torch.backends.cudnn.allow_tf32 = False
 
     model = SilexCodeT18_6B_R64(device="cuda")
-    optimizer = BlockKFACOptimizer(plastic_named_parameters(model), lr=0.04, damping=3e-4, trust_region=5e-4)
+    optimizer = BlockKFACOptimizer(
+        plastic_named_parameters(model), lr=0.04, damping=3e-4, trust_region=5e-4
+    )
     workspace = model.allocate_train_workspace()
     state = model.initial_state()
 
@@ -39,7 +41,7 @@ def main() -> None:
         optimizer.reset_curvature(active_layers=cfg["active_layers"], damping=cfg["damping"])
         record = generate_record(stage, stage * 1_000_000_000)
         input_ids, labels, loss_mask = build_sequence_and_mask(record, stage)
-        chunk_ids = input_ids + [labels[-1]]
+        chunk_ids = [*input_ids, labels[-1]]
         metrics, state = model.train_chunk_cuda(
             torch.tensor(chunk_ids, device="cuda", dtype=torch.long),
             state=state,
