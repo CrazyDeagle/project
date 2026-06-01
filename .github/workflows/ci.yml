@@ -100,7 +100,7 @@ jobs:
           SILEX_SKIP_CUDA_BUILD: "1"
         run: |
           pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.1"
-          pip install build
+          pip install build wheel setuptools
           python -m build --sdist --no-isolation
       - uses: actions/upload-artifact@v4
         if: always()

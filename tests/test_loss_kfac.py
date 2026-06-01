@@ -50,6 +50,8 @@ def test_block_kfac_stage_hyperparams_and_active_layers() -> None:
     assert p2.abs().sum() == 0
 
 
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 def test_native_workspace_layout_matches_tdd_budget() -> None:
     ext = _load_extension()
     layout = ext.silex_train_workspace_layout(512)
