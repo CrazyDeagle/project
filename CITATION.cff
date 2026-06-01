@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+title: "SilexCode-T18.6B-R64"
+message: "If you use this software in academic work, please cite it as below."
+type: software
+authors:
+  - name: "SilexCode Contributors"
+repository-code: "https://github.com/CrazyDeagle/project"
+abstract: >-
+  CUDA/C++ and PyTorch implementation of the SilexCode-T18.6B-R64 TDD
+  architecture, including curriculum, bootstrap and accelerated training
+  pipelines with native K-FAC-style updates.
+keywords:
+  - machine-learning
+  - cuda
+  - pytorch
+  - language-model
+  - curriculum-learning
+  - k-fac
+license: Apache-2.0
+version: "0.1.0"
