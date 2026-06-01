@@ -77,12 +77,15 @@ jobs:
       - name: Install dev dependencies
         run: pip install "pytest>=7.4" "numpy>=1.24"
 
-      # We do not build the CUDA extension in CI; tests marked with the `cuda`
-      # marker are skipped automatically when the extension is missing.
+      - name: Install silexcode (no CUDA extension)
+        env:
+          SILEX_SKIP_CUDA_BUILD: "1"
+        run: pip install -e . --no-build-isolation --no-deps
+
       - name: Run pytest (non-CUDA)
         env:
           SILEX_SKIP_CUDA_BUILD: "1"
-        run: pytest -q -m "not cuda" || pytest -q
+        run: pytest -q -m "not cuda"
 
   build-sdist:
     name: Build sdist
@@ -93,9 +96,12 @@ jobs:
         with:
           python-version: "3.11"
       - name: Build source distribution
+        env:
+          SILEX_SKIP_CUDA_BUILD: "1"
         run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.1"
           pip install build
-          SILEX_SKIP_CUDA_BUILD=1 python -m build --sdist || true
+          python -m build --sdist --no-isolation
       - uses: actions/upload-artifact@v4
         if: always()
         with:
