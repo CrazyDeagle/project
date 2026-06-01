@@ -1,6 +1,15 @@
 # SilexCode-T18.6B-R64
 
+[![CI](https://github.com/CrazyDeagle/project/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CrazyDeagle/project/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/CrazyDeagle/project/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/CrazyDeagle/project/actions/workflows/codeql.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](pyproject.toml)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://docs.astral.sh/ruff/)
+[![Pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen.svg)](.pre-commit-config.yaml)
+
 CUDA/C++ and PyTorch implementation of the fixed SilexCode-T18.6B-R64 TDD architecture.
+
+> **Documentation:** [architecture](docs/architecture.md) · [development guide](docs/development.md) · [ADRs](docs/adr/) · [changelog](CHANGELOG.md) · [contributing](CONTRIBUTING.md) · [security policy](SECURITY.md)
 
 ## Requirements
 
@@ -125,3 +134,31 @@ bash scripts/vast_stop_training.sh
 
 - `deterministic_backbone=True`: native runtime uses the FWHT fast path that exactly matches the deterministic TDD initialization.
 - `deterministic_backbone=False`: native runtime uses packed `Wpack` kernels so arbitrary checkpoint weights are respected.
+
+## Project Layout
+
+```
+silexcode/        Core package (model, losses, K-FAC, CUDA extension)
+scripts/          Vast.ai helper shell scripts
+tests/            pytest suite (CPU-safe by default; CUDA tests skip without a GPU)
+docs/             Architecture, development guide, ADRs
+.github/          CI workflows, issue/PR templates, CODEOWNERS, dependabot
+```
+
+See [docs/architecture.md](docs/architecture.md) for a guided tour of the
+package and [docs/adr/](docs/adr/) for recorded design decisions.
+
+## Contributing
+
+Bug reports and pull requests are welcome. Please read
+[CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR, and use the issue
+templates under [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/). All
+participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+Security issues should be reported privately — see [SECURITY.md](SECURITY.md).
+
+## License
+
+SilexCode is released under the [Apache License 2.0](LICENSE). If you use this
+work in academic publications, please cite it using the metadata in
+[CITATION.cff](CITATION.cff).
